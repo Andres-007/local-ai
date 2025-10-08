@@ -3,18 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="static/style.css">
     <title>Web Dev AI</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <!-- CodeMirror CSS -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/dracula.min.css">
-    <!-- Highlight.js CSS para bloques de código -->
+    <!-- Highlight.js para resaltado de sintaxis -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
 </head>
 <body>
     <div class="chat-container">
         <header class="chat-header">
-            <h1><span class="logo-dot"></span> Web Dev AI</h1>
+            <h1>Web Dev AI</h1>
             <p>Tu asistente especializado en código y desarrollo web</p>
         </header>
 
@@ -23,11 +20,13 @@
         </div>
 
         <footer class="chat-input-area">
-            <!-- **FIX**: El botón está ahora dentro del formulario -->
             <form id="chat-form" class="chat-form">
                 <input type="text" id="chat-input" placeholder="Genera un index.html para una página de videojuegos..." autocomplete="off">
                 <button type="submit" id="send-btn" aria-label="Enviar mensaje">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M5 12h14"/>
+                        <path d="m12 5 7 7-7 7"/>
+                    </svg>
                 </button>
             </form>
         </footer>
@@ -44,18 +43,11 @@
         </div>
     </div>
 
-    <!-- CodeMirror JS -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/xml/xml.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/css/css.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/htmlmixed/htmlmixed.min.js"></script>
     <!-- Highlight.js para dar estilo a los bloques de código -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-    <!-- Markdown-it para renderizar la respuesta -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/markdown-it/14.0.0/markdown-it.min.js"></script>
-    <!-- Lógica del Frontend -->
-    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+    
+    <!-- CORRECCIÓN: Usar la versión UMD de markdown-it que funciona en navegadores -->
+    <script src="https://cdn.jsdelivr.net/npm/markdown-it@14.0.0/dist/markdown-it.min.js"></script>
+    <script src="static/js/script.js"></script>
 </body>
 </html>
-
