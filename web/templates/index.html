@@ -3,50 +3,81 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="static/style.css">
     <title>Web Dev AI</title>
-    <!-- Highlight.js para resaltado de sintaxis -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <link rel="stylesheet" href="static/style.css">
 </head>
 <body>
-    <div class="chat-container">
-        <header class="chat-header">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <button class="new-chat-btn" id="new-chat-btn">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                Nueva conversación
+            </button>
+        </div>
+        <div class="conversations-list" id="conversations-list">
+            <!-- Conversaciones dinámicas -->
+        </div>
+    </aside>
+
+    <!-- Main -->
+    <div class="main-container">
+        <!-- Header -->
+        <header class="header">
+            <button class="menu-btn" id="toggle-sidebar">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="3" y1="12" x2="21" y2="12"></line>
+                    <line x1="3" y1="6" x2="21" y2="6"></line>
+                    <line x1="3" y1="18" x2="21" y2="18"></line>
+                </svg>
+            </button>
             <h1>Web Dev AI</h1>
-            <p>Tu asistente especializado en código y desarrollo web</p>
         </header>
 
-        <div class="chat-messages" id="chat-messages">
-            <!-- Los mensajes se insertarán aquí dinámicamente -->
+        <!-- Chat -->
+        <div class="chat-container" id="chat-container">
+            <div class="empty-state">
+                <div class="empty-state-icon">💬</div>
+                <h2>¿En qué puedo ayudarte hoy?</h2>
+                <p>Puedo ayudarte a crear, depurar y mejorar tu código web</p>
+            </div>
         </div>
 
-        <footer class="chat-input-area">
-            <form id="chat-form" class="chat-form">
-                <input type="text" id="chat-input" placeholder="Genera un index.html para una página de videojuegos..." autocomplete="off">
-                <button type="submit" id="send-btn" aria-label="Enviar mensaje">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M5 12h14"/>
-                        <path d="m12 5 7 7-7 7"/>
+        <!-- Input -->
+        <div class="input-area">
+            <form class="input-container" id="chat-form">
+                <input 
+                    type="text" 
+                    id="chat-input" 
+                    placeholder="Escribe tu mensaje..."
+                    autocomplete="off"
+                >
+                <button type="submit" id="send-btn">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="22" y1="2" x2="11" y2="13"></line>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
                     </svg>
                 </button>
             </form>
-        </footer>
+        </div>
     </div>
 
-    <!-- Modal para el previsualizador de código -->
-    <div id="preview-modal" class="modal">
+    <!-- Modal -->
+    <div class="modal" id="preview-modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h2>Previsualizador de Código</h2>
-                <button id="close-modal" class="close-button">&times;</button>
+                <h2>Vista previa del código</h2>
+                <button class="close-btn" id="close-modal">&times;</button>
             </div>
             <iframe id="runner-frame"></iframe>
         </div>
     </div>
 
-    <!-- Highlight.js para dar estilo a los bloques de código -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-    
-    <!-- CORRECCIÓN: Usar la versión UMD de markdown-it que funciona en navegadores -->
     <script src="https://cdn.jsdelivr.net/npm/markdown-it@14.0.0/dist/markdown-it.min.js"></script>
     <script src="static/js/script.js"></script>
 </body>
