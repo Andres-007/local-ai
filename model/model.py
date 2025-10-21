@@ -14,13 +14,13 @@ class WebDevAI:
     """
     def __init__(self):
         """
-        Inicializa el modelo generativo de Gemini y el historial de conversación.
+        Inicializa el modelo generativo y el historial de conversación.
         """
         generation_config = {
             "temperature": 0.5,
             "top_p": 1,
             "top_k": 32,
-            "max_output_tokens": 8192, # Aumentado para páginas más complejas
+            "max_output_tokens": 32768,
         }
         safety_settings = [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
@@ -29,7 +29,7 @@ class WebDevAI:
             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
         ]
         self.model = genai.GenerativeModel(
-            model_name="gemini-2.5-flash",
+            model_name="gemini-2.5-pro",
             generation_config=generation_config,
             safety_settings=safety_settings
         )
@@ -79,5 +79,5 @@ class WebDevAI:
             self.convo.send_message(prompt)
             return self.convo.last.text
         except Exception as e:
-            print(f"Error al contactar la API de Gemini: {e}")
-            return "Error: No se pudo obtener una respuesta del modelo. Verifica tu clave de API y la conexión a internet."
+            print(f"Error al contactar: {e}")
+            return "Error: No se pudo obtener una respuesta del modelo. Verifica la conexión a internet."
