@@ -59,10 +59,10 @@ class WebDevAI:
         
         # Modelo optimizado con system instruction integrada
         self.model = genai.GenerativeModel(
-            model_name="gemini-2.5-pro",  # Modelo más rápido
+            model_name="gemini-2.5-pro",
             generation_config=generation_config,
             safety_settings=safety_settings,
-            system_instruction=system_instruction  # System instruction ahora aquí
+            system_instruction=system_instruction
         )
         
         # Inicia la conversación con un historial limpio

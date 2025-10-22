@@ -269,32 +269,82 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // --- Code Preview Modal (MEJORADO) ---
     function addPreviewButton(content) {
-        // Buscar todos los bloques de código HTML
         const codeBlocks = content.querySelectorAll('pre > code');
         
         codeBlocks.forEach(codeBlock => {
-            const className = codeBlock.className || '';
-            const isHTML = className.includes('language-html') || className.includes('html');
+            const preElement = codeBlock.parentElement;
+            if (preElement.querySelector('.code-header')) return; // Evitar duplicados
+
+            const lang = (codeBlock.className.match(/language-(\S+)/) || [, ''])[1];
+            const codeContent = codeBlock.textContent;
+
+            const isHtmlContent = /^\s*<!DOCTYPE html|<html/i.test(codeContent);
             
-            if (isHTML && !codeBlock.parentElement.querySelector('.preview-btn')) {
+            const header = document.createElement('div');
+            header.className = 'code-header';
+
+            const langName = document.createElement('span');
+            langName.className = 'lang-name';
+            langName.textContent = lang || (isHtmlContent ? 'html' : 'código');
+
+            const actions = document.createElement('div');
+            actions.className = 'code-actions';
+            
+            const copyBtn = document.createElement('button');
+            copyBtn.className = 'code-action-btn';
+            copyBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg> Copiar`;
+            copyBtn.onclick = async () => {
+                try {
+                    await navigator.clipboard.writeText(codeBlock.textContent);
+                    const originalText = copyBtn.innerHTML;
+                    copyBtn.innerHTML = `¡Copiado!`;
+                    setTimeout(() => { copyBtn.innerHTML = originalText; }, 2000);
+                } catch(err) { console.error('Error al copiar'); }
+            };
+            actions.appendChild(copyBtn);
+
+            if (lang === 'html' || isHtmlContent) {
                 const btn = document.createElement('button');
-                btn.className = 'preview-btn';
-                btn.innerHTML = `
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                        <circle cx="12" cy="12" r="3"></circle>
-                    </svg> 
-                    Ver vista previa
-                `;
+                btn.className = 'code-action-btn preview-btn';
+                btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg> Vista Previa`;
+                
                 btn.onclick = () => {
                     currentPreviewCode = codeBlock.textContent;
-                    runnerFrame.srcdoc = currentPreviewCode;
+                    
+                    // --- SOLUCIÓN DEFINITIVA: Inyectar script para prevenir navegación ---
+                    const scriptToInject = `
+                        <script>
+                            document.addEventListener('DOMContentLoaded', () => {
+                                const preventAction = (e) => {
+                                    e.preventDefault();
+                                    console.log('Acción prevenida en vista previa:', e.type, e.target);
+                                    alert('La navegación y el envío de formularios están desactivados en esta vista previa.');
+                                };
+                                document.querySelectorAll('a, form, button[type="submit"]').forEach(el => {
+                                    const eventType = el.tagName === 'FORM' ? 'submit' : 'click';
+                                    el.addEventListener(eventType, preventAction);
+                                });
+                            });
+                        <\/script>
+                    `;
+                    
+                    // Añadir el script al final del body o del html
+                    let modifiedCode = currentPreviewCode;
+                    if (modifiedCode.includes('</body>')) {
+                        modifiedCode = modifiedCode.replace('</body>', scriptToInject + '</body>');
+                    } else {
+                        modifiedCode += scriptToInject;
+                    }
+
+                    runnerFrame.srcdoc = modifiedCode;
                     previewModal.classList.add('show');
                 };
-                
-                // Insertar el botón después del bloque de código
-                codeBlock.parentElement.parentElement.insertBefore(btn, codeBlock.parentElement.nextSibling);
+                actions.appendChild(btn);
             }
+            
+            header.appendChild(langName);
+            header.appendChild(actions);
+            preElement.parentNode.insertBefore(header, preElement);
         });
     }
 
@@ -305,37 +355,25 @@ document.addEventListener('DOMContentLoaded', () => {
         currentPreviewCode = '';
     });
 
-    // Copiar código
     copyCodeBtn.addEventListener('click', async () => {
         if (!currentPreviewCode) return;
-        
         try {
             await navigator.clipboard.writeText(currentPreviewCode);
-            
-            // Feedback visual
             const originalText = copyCodeBtn.innerHTML;
-            copyCodeBtn.innerHTML = `
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="20 6 9 17 4 12"></polyline>
-                </svg>
-                ¡Copiado!
-            `;
+            copyCodeBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg> ¡Copiado!`;
             copyCodeBtn.style.background = 'var(--user-msg)';
-            
             setTimeout(() => {
                 copyCodeBtn.innerHTML = originalText;
                 copyCodeBtn.style.background = '';
             }, 2000);
         } catch (err) {
             console.error('Error copiando código:', err);
-            alert('No se pudo copiar el código. Por favor, copia manualmente.');
+            alert('No se pudo copiar el código.');
         }
     });
 
-    // Descargar código
     downloadCodeBtn.addEventListener('click', () => {
         if (!currentPreviewCode) return;
-        
         const blob = new Blob([currentPreviewCode], { type: 'text/html' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -347,7 +385,6 @@ document.addEventListener('DOMContentLoaded', () => {
         URL.revokeObjectURL(url);
     });
 
-    // Cerrar modal al hacer clic fuera
     document.querySelectorAll('.modal').forEach(modal => {
         modal.addEventListener('click', (e) => {
             if (e.target === modal) {
@@ -370,3 +407,4 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Initial Load ---
     loadConversations();
 });
+

@@ -113,7 +113,7 @@ body {
 .header h1 { font-size: 1.8rem; font-weight: 600; }
 
 /* ==========================================================================
-   Área de Chat y Input
+   Área de Chat y Mensajes
    ========================================================================== */
 .chat-container { flex-grow: 1; overflow-y: auto; padding: 1.6rem 1.2rem; display: flex; flex-direction: column; gap: 2.4rem; }
 .message-group { display: flex; flex-direction: column; gap: 0.8rem; max-width: 100%; }
@@ -123,10 +123,68 @@ body {
 .message-content { padding: 1.2rem; border-radius: 1.2rem; line-height: 1.6; max-width: 90%; word-wrap: break-word; }
 .user-message .message-content { background: var(--user-msg); }
 .bot-message .message-content { background: var(--bg-secondary); border: 1px solid var(--border); }
-.bot-message .message-content pre { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 0.8rem; padding: 1.6rem; overflow-x: auto; margin: 1.6rem 0; }
 .bot-message .message-content code { font-family: 'Monaco', 'Menlo', monospace; font-size: 1.4rem; }
-.preview-btn { display: inline-flex; align-items: center; gap: 0.8rem; padding: 0.8rem 1.6rem; background: var(--accent); border: none; border-radius: 0.6rem; color: white; font-size: 1.4rem; cursor: pointer; margin-top: 1.2rem; transition: background 0.2s; justify-content: center; }
-.preview-btn:hover { background: var(--accent-hover); }
+
+/* --- (NUEVO) Estilos para Bloques de Código Mejorados --- */
+.bot-message .message-content .code-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg-tertiary);
+    padding: 0.8rem 1.6rem;
+    border: 1px solid var(--border);
+    border-bottom: none;
+    border-radius: 0.8rem 0.8rem 0 0;
+    margin-top: 1.6rem;
+}
+.code-lang {
+    font-size: 1.2rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    font-weight: 500;
+}
+.code-actions {
+    display: flex;
+    gap: 0.8rem;
+}
+.code-action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.4rem 0.8rem;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 0.6rem;
+    color: var(--text-secondary);
+    font-size: 1.2rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.code-action-btn:hover {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    border-color: var(--accent);
+}
+.code-action-btn.preview-btn {
+    color: var(--accent);
+    border-color: transparent;
+    background: rgba(47, 129, 247, 0.1);
+}
+.code-action-btn.preview-btn:hover {
+    background: rgba(47, 129, 247, 0.2);
+    border-color: var(--accent);
+    color: var(--accent-hover);
+}
+.bot-message .message-content pre {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 0 0 0.8rem 0.8rem;
+    padding: 1.6rem;
+    overflow-x: auto;
+    margin: 0;
+}
+/* -------------------------------------------------------- */
+
 .typing-indicator { display: flex; gap: 0.6rem; padding: 1.6rem; }
 .typing-indicator span { width: 0.8rem; height: 0.8rem; background: var(--text-secondary); border-radius: 50%; animation: bounce 1.4s infinite ease-in-out both; }
 .typing-indicator span:nth-child(1) { animation-delay: -0.32s; }
@@ -136,6 +194,10 @@ body {
 .empty-state-icon { font-size: 6rem; }
 .empty-state h2 { font-size: 2.4rem; font-weight: 600; }
 .empty-state p { color: var(--text-secondary); font-size: 1.6rem; }
+
+/* ==========================================================================
+   Área de Input
+   ========================================================================== */
 .input-area { padding: 1.2rem; background: var(--bg-secondary); border-top: 1px solid var(--border); flex-shrink: 0; }
 .input-container { max-width: 80rem; margin: 0 auto; display: flex; gap: 1.2rem; align-items: flex-end; }
 #chat-input { flex-grow: 1; padding: 1.2rem 1.6rem; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 0.8rem; color: var(--text-primary); font-size: 1.6rem; resize: none; font-family: inherit; line-height: 1.5; max-height: 20rem; overflow-y: auto; }
@@ -145,7 +207,7 @@ body {
 #send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ==========================================================================
-   Modal de Previsualización (MEJORADO Y RESPONSIVE)
+   Modal de Previsualización y Confirmación
    ========================================================================== */
 .modal { display: flex; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--overlay); z-index: 2000; align-items: center; justify-content: center; opacity: 0; visibility: hidden; transition: opacity 0.3s ease, visibility 0s 0.3s; padding: 0; }
 .modal.show { opacity: 1; visibility: visible; transition: opacity 0.3s ease; }
@@ -161,158 +223,40 @@ body {
     transition: transform 0.3s ease; 
 }
 .modal.show .modal-content { transform: scale(1); }
+.modal-content.small { width: 90%; max-width: 40rem; height: auto; border-radius: 1.2rem; }
 
-.modal-content.small { 
-    width: 90%; 
-    max-width: 40rem; 
-    height: auto; 
-    border-radius: 1.2rem; 
-}
+.modal-header { padding: 1.2rem 1.6rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; gap: 1.2rem; }
+.modal-header h2 { font-size: 1.6rem; font-weight: 600; flex-shrink: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.modal-actions { display: flex; gap: 0.8rem; align-items: center; }
+.modal-body { padding: 1.6rem; overflow-y: auto; }
+.modal-footer { padding: 1.6rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 1.2rem; }
 
-.modal-header { 
-    padding: 1.2rem 1.6rem; 
-    border-bottom: 1px solid var(--border); 
-    display: flex; 
-    justify-content: space-between; 
-    align-items: center; 
-    flex-shrink: 0; 
-    background: var(--bg-secondary);
-    gap: 1.2rem;
-}
-.modal-header h2 { 
-    font-size: 1.6rem; 
-    font-weight: 600; 
-    flex-shrink: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
+.btn { padding: 0.8rem 1.6rem; border-radius: 0.6rem; border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-primary); cursor: pointer; font-size: 1.4rem; transition: all 0.2s; white-space: nowrap; }
+.btn:hover { background: var(--bg-primary); }
+.btn.btn-danger { background: var(--danger); border-color: var(--danger); color: white; }
+.btn.btn-danger:hover { background: var(--danger-hover); }
 
-.modal-actions {
-    display: flex;
-    gap: 0.8rem;
-    align-items: center;
-}
+.icon-btn { padding: 0.8rem; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 0.6rem; color: var(--text-primary); cursor: pointer; display: flex; align-items: center; justify-content: center; min-width: 3.6rem; min-height: 3.6rem; transition: all 0.2s; }
+.icon-btn:hover { background: var(--bg-primary); }
+.icon-btn.copied { background: var(--user-msg); }
 
-.modal-body { 
-    padding: 1.6rem; 
-    overflow-y: auto;
-}
+.close-btn { padding: 0.4rem; background: none; border: none; color: var(--text-primary); cursor: pointer; font-size: 2.4rem; line-height: 1; border-radius: 0.6rem; min-width: 3.6rem; min-height: 3.6rem; display: flex; align-items: center; justify-content: center; transition: background 0.2s; }
+.close-btn:hover { background: var(--bg-tertiary); }
 
-.modal-footer { 
-    padding: 1.6rem; 
-    border-top: 1px solid var(--border); 
-    display: flex; 
-    justify-content: flex-end; 
-    gap: 1.2rem; 
-}
-
-.btn { 
-    padding: 0.8rem 1.6rem; 
-    border-radius: 0.6rem; 
-    border: 1px solid var(--border); 
-    background: var(--bg-tertiary); 
-    color: var(--text-primary); 
-    cursor: pointer; 
-    font-size: 1.4rem; 
-    display: inline-flex;
-    align-items: center;
-    gap: 0.8rem;
-    transition: all 0.2s;
-    white-space: nowrap;
-}
-.btn:hover {
-    background: var(--bg-primary);
-}
-.btn.btn-danger { 
-    background: var(--danger); 
-    border-color: var(--danger); 
-    color: white; 
-}
-.btn.btn-danger:hover { 
-    background: var(--danger-hover); 
-}
-
-.icon-btn {
-    padding: 0.8rem;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border);
-    border-radius: 0.6rem;
-    color: var(--text-primary);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 3.6rem;
-    min-height: 3.6rem;
-    transition: all 0.2s;
-}
-.icon-btn:hover {
-    background: var(--bg-primary);
-}
-
-.close-btn { 
-    padding: 0.4rem; 
-    background: none; 
-    border: none; 
-    color: var(--text-primary); 
-    cursor: pointer; 
-    font-size: 2.4rem; 
-    line-height: 1; 
-    border-radius: 0.6rem; 
-    min-width: 3.6rem;
-    min-height: 3.6rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: background 0.2s;
-}
-.close-btn:hover {
-    background: var(--bg-tertiary);
-}
-
-#runner-frame { 
-    flex-grow: 1; 
-    border: none; 
-    background: white; 
-    width: 100%;
-    height: 100%;
-}
+#runner-frame { flex-grow: 1; border: none; background: white; width: 100%; height: 100%; }
 
 /* ==========================================================================
    Media Queries (Responsive)
    ========================================================================== */
 @media (min-width: 768px) {
-    .sidebar { 
-        position: static; 
-        transform: translateX(0); 
-        width: 26rem; 
-        transition: width 0.3s ease, min-width 0.3s ease; 
-        box-shadow: none; 
-    }
-    .sidebar.collapsed { 
-        width: 0; 
-        min-width: 0; 
-        border-right: none; 
-        overflow: hidden; 
-    }
+    .sidebar { position: static; transform: translateX(0); width: 26rem; transition: width 0.3s ease, min-width 0.3s ease; box-shadow: none; }
+    .sidebar.collapsed { width: 0; min-width: 0; border-right: none; overflow: hidden; }
     .header h1 { font-size: 2rem; }
     .message-content { max-width: 72rem; }
     
-    .modal-content { 
-        width: 95%; 
-        height: 90%; 
-        border-radius: 1.2rem; 
-        border: 1px solid var(--border); 
-    }
-    
-    .modal-header {
-        padding: 1.6rem 2rem;
-    }
-    
-    .modal-header h2 {
-        font-size: 1.8rem;
-    }
+    .modal-content { width: 95%; height: 90%; border-radius: 1.2rem; border: 1px solid var(--border); }
+    .modal-header { padding: 1.6rem 2rem; }
+    .modal-header h2 { font-size: 1.8rem; }
     
     .delete-btn { opacity: 0; }
     .conversation-item:hover .delete-btn { opacity: 1; }
@@ -321,17 +265,9 @@ body {
 @media (min-width: 1024px) {
     .chat-container { padding: 3.2rem; }
     .message-content { max-width: 80rem; }
-    
-    .modal-content { 
-        width: 90%; 
-        max-width: 140rem;
-        height: 85%; 
-    }
+    .modal-content { width: 90%; max-width: 140rem; height: 85%; }
 }
 
 @media (min-width: 1440px) {
-    .modal-content { 
-        width: 85%; 
-        max-width: 160rem;
-    }
+    .modal-content { width: 85%; max-width: 160rem; }
 }
