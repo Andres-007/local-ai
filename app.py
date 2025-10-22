@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, session
+from flask import Flask, render_template, request, jsonify, session, Response
 from flask_cors import CORS
 from model.model import WebDevAI
 from model.database import ChatDatabase
@@ -11,7 +11,7 @@ app.secret_key = os.getenv('SECRET_KEY', secrets.token_hex(16))
 # Habilitar CORS
 CORS(app, resources={
     r"/api/*": {
-        "origins": ["https://.io", "http://localhost:5000"],
+        "origins": ["https://*.io", "http://localhost:5000"],
         "supports_credentials": True
     }
 })
@@ -77,7 +77,7 @@ def update_conversation_title(conversation_id):
 
 @app.route('/api/generate', methods=['POST'])
 def api_generate():
-    """Endpoint principal para generar respuestas de la IA"""
+    """Endpoint principal para generar respuestas de la IA (respuesta completa)"""
     if not request.is_json:
         return jsonify({"error": "La solicitud debe ser JSON"}), 400
 
@@ -113,6 +113,45 @@ def api_generate():
     except Exception as e:
         print(f"Error en la API: {e}")
         return jsonify({"error": "Error interno del servidor"}), 500
+
+@app.route('/api/generate-stream', methods=['POST'])
+def api_generate_stream():
+    """Endpoint para generar respuestas de la IA en streaming"""
+    if not request.is_json:
+        return jsonify({"error": "La solicitud debe ser JSON"}), 400
+
+    data = request.get_json()
+    prompt = data.get('prompt')
+    conversation_id = data.get('conversation_id')
+    
+    if not prompt:
+        return jsonify({"error": "Falta el parámetro 'prompt'"}), 400
+    
+    if not conversation_id:
+        return jsonify({"error": "Se requiere conversation_id para streaming"}), 400
+
+    def generate():
+        """Generador que envía chunks de texto y guarda al final"""
+        full_response = ""
+        try:
+            # Guardar el mensaje del usuario
+            db.save_message(conversation_id, 'user', prompt)
+            
+            # Generar y transmitir respuesta en streaming
+            for chunk in ai_model.generate_stream(prompt):
+                full_response += chunk
+                yield chunk
+            
+            # Guardar la respuesta completa de la IA en la base de datos
+            db.save_message(conversation_id, 'bot', full_response)
+            
+        except Exception as e:
+            error_msg = f"Error: {str(e)}"
+            print(f"Error en streaming: {e}")
+            yield error_msg
+            db.save_message(conversation_id, 'bot', error_msg)
+    
+    return Response(generate(), mimetype='text/plain')
 
 @app.route('/api/search', methods=['POST'])
 def search_conversations():

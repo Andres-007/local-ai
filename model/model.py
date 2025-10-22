@@ -14,7 +14,7 @@ class WebDevAI:
     """
     def __init__(self):
         """
-        Inicializa el modelo generativo y el historial de conversación.
+        Inicializa el modelo generativo con system instruction integrada.
         """
         generation_config = {
             "temperature": 0.5,
@@ -28,12 +28,8 @@ class WebDevAI:
             {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
         ]
-        self.model = genai.GenerativeModel(
-            model_name="gemini-2.5-pro",
-            generation_config=generation_config,
-            safety_settings=safety_settings
-        )
-        # **FIX**: Instrucción del sistema mucho más específica y robusta
+        
+        # System instruction ahora se pasa directamente al modelo
         system_instruction = """
         Eres 'Web Dev AI', un asistente de software experto full-stack.
         Tu función es generar, analizar, corregir y explicar código, cubriendo tanto frontend (HTML, CSS, JavaScript) como backend (Python con Flask, Node.js con Express).
@@ -58,16 +54,23 @@ class WebDevAI:
         **Reglas de Interacción:**
         - Si un prompt es ambiguo, pide clarificación.
         - Si te piden código en un lenguaje o framework que no manejas (ej. Java/Spring, PHP/Laravel), explica educadamente tus capacidades actuales (Frontend, Python/Flask, Node.js/Express) y ofrece generar una solución con esas tecnologías.
-        - Para preguntas teóricas, proporciona explicaciones claras y concisas.  
+        - Para preguntas teóricas, proporciona explicaciones claras y concisas.
         """
-        # Inicia la conversación con la instrucción del sistema
-        self.convo = self.model.start_chat(history=[
-            {'role': 'user', 'parts': [system_instruction]},
-            {'role': 'model', 'parts': ["Entendido. Soy un asistente de IA especializado únicamente en generar código web completo en un solo archivo HTML. ¿Qué página web necesitas que construya?"]}
-        ])
+        
+        # Modelo optimizado con system instruction integrada
+        self.model = genai.GenerativeModel(
+            model_name="gemini-2.5-pro",  # Modelo más rápido
+            generation_config=generation_config,
+            safety_settings=safety_settings,
+            system_instruction=system_instruction  # System instruction ahora aquí
+        )
+        
+        # Inicia la conversación con un historial limpio
+        self.convo = self.model.start_chat(history=[])
+    
     def generate(self, prompt):
         """
-        Envía un prompt del usuario al modelo y obtiene una respuesta.
+        Envía un prompt del usuario al modelo y obtiene una respuesta completa.
 
         Args:
             prompt (str): La pregunta o instrucción del usuario.
@@ -81,3 +84,22 @@ class WebDevAI:
         except Exception as e:
             print(f"Error al contactar: {e}")
             return "Error: No se pudo obtener una respuesta del modelo. Verifica la conexión a internet."
+    
+    def generate_stream(self, prompt):
+        """
+        Envía un prompt del usuario al modelo y genera una respuesta en streaming.
+
+        Args:
+            prompt (str): La pregunta o instrucción del usuario.
+
+        Yields:
+            str: Fragmentos de texto de la respuesta conforme se generan.
+        """
+        try:
+            response = self.convo.send_message(prompt, stream=True)
+            for chunk in response:
+                if chunk.text:
+                    yield chunk.text
+        except Exception as e:
+            print(f"Error al contactar (streaming): {e}")
+            yield "Error: No se pudo obtener una respuesta del modelo. Verifica la conexión a internet."

@@ -25,9 +25,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const deleteModal = document.getElementById('delete-confirm-modal');
     const cancelDeleteBtn = document.getElementById('cancel-delete-btn');
     const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
+    const copyCodeBtn = document.getElementById('copy-code-btn');
+    const downloadCodeBtn = document.getElementById('download-code-btn');
 
     let currentConversationId = null;
     let conversationToDeleteId = null;
+    let currentPreviewCode = '';
     
     // --- Markdown Initializer ---
     const md = window.markdownit({
@@ -152,7 +155,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // --- Message Sending Logic ---
+    // --- Message Sending Logic (with Streaming Support) ---
     chatForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const message = chatInput.value.trim();
@@ -168,21 +171,54 @@ document.addEventListener('DOMContentLoaded', () => {
         sendBtn.disabled = true;
 
         try {
-            const res = await fetch('/api/generate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt: message, conversation_id: currentConversationId })
-            });
-
-            if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-            
-            const data = await res.json();
-            
+            // Si es un chat nuevo, usar el endpoint normal para obtener conversation_id
             if (!currentConversationId) {
+                const res = await fetch('/api/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt: message, conversation_id: currentConversationId })
+                });
+
+                if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+                
+                const data = await res.json();
                 currentConversationId = data.conversation_id;
                 loadConversations();
+                updateLastBotMessage(data.response, typingIndicator);
+            } else {
+                // Si es un chat existente, usar streaming
+                const res = await fetch('/api/generate-stream', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt: message, conversation_id: currentConversationId })
+                });
+
+                if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+                
+                // Procesar el stream
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let fullResponse = '';
+
+                // Reemplazar el typing indicator con un mensaje vacío
+                const content = typingIndicator.querySelector('.message-content');
+                content.innerHTML = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    const chunk = decoder.decode(value, { stream: true });
+                    fullResponse += chunk;
+                    
+                    // Re-renderizar el markdown completo en tiempo real
+                    content.innerHTML = md.render(fullResponse);
+                    addPreviewButton(content);
+                    
+                    // Auto-scroll
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                }
             }
-            updateLastBotMessage(data.response, typingIndicator);
         } catch (err) {
             updateLastBotMessage('Error: No se pudo obtener respuesta del servidor.', typingIndicator);
             console.error(err);
@@ -231,27 +267,96 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     
-    // --- Code Preview Modal ---
+    // --- Code Preview Modal (MEJORADO) ---
     function addPreviewButton(content) {
-        const codeBlock = content.querySelector('pre > code');
-        if (codeBlock && (codeBlock.className.includes('language-html') || codeBlock.className.includes('html')) ) {
-            const btn = document.createElement('button');
-            btn.className = 'preview-btn';
-            btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg> Ver vista previa`;
-            btn.onclick = () => {
-                runnerFrame.srcdoc = codeBlock.textContent;
-                previewModal.classList.add('show');
-            };
-            content.appendChild(btn);
-        }
+        // Buscar todos los bloques de código HTML
+        const codeBlocks = content.querySelectorAll('pre > code');
+        
+        codeBlocks.forEach(codeBlock => {
+            const className = codeBlock.className || '';
+            const isHTML = className.includes('language-html') || className.includes('html');
+            
+            if (isHTML && !codeBlock.parentElement.querySelector('.preview-btn')) {
+                const btn = document.createElement('button');
+                btn.className = 'preview-btn';
+                btn.innerHTML = `
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                        <circle cx="12" cy="12" r="3"></circle>
+                    </svg> 
+                    Ver vista previa
+                `;
+                btn.onclick = () => {
+                    currentPreviewCode = codeBlock.textContent;
+                    runnerFrame.srcdoc = currentPreviewCode;
+                    previewModal.classList.add('show');
+                };
+                
+                // Insertar el botón después del bloque de código
+                codeBlock.parentElement.parentElement.insertBefore(btn, codeBlock.parentElement.nextSibling);
+            }
+        });
     }
+
+    // --- Modal Controls ---
     closeModalBtn.addEventListener('click', () => {
         previewModal.classList.remove('show');
         runnerFrame.srcdoc = '';
+        currentPreviewCode = '';
     });
+
+    // Copiar código
+    copyCodeBtn.addEventListener('click', async () => {
+        if (!currentPreviewCode) return;
+        
+        try {
+            await navigator.clipboard.writeText(currentPreviewCode);
+            
+            // Feedback visual
+            const originalText = copyCodeBtn.innerHTML;
+            copyCodeBtn.innerHTML = `
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                ¡Copiado!
+            `;
+            copyCodeBtn.style.background = 'var(--user-msg)';
+            
+            setTimeout(() => {
+                copyCodeBtn.innerHTML = originalText;
+                copyCodeBtn.style.background = '';
+            }, 2000);
+        } catch (err) {
+            console.error('Error copiando código:', err);
+            alert('No se pudo copiar el código. Por favor, copia manualmente.');
+        }
+    });
+
+    // Descargar código
+    downloadCodeBtn.addEventListener('click', () => {
+        if (!currentPreviewCode) return;
+        
+        const blob = new Blob([currentPreviewCode], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `web-dev-ai-${Date.now()}.html`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    });
+
+    // Cerrar modal al hacer clic fuera
     document.querySelectorAll('.modal').forEach(modal => {
         modal.addEventListener('click', (e) => {
-            if (e.target === modal) modal.classList.remove('show');
+            if (e.target === modal) {
+                modal.classList.remove('show');
+                if (modal === previewModal) {
+                    runnerFrame.srcdoc = '';
+                    currentPreviewCode = '';
+                }
+            }
         });
     });
 
@@ -265,4 +370,3 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Initial Load ---
     loadConversations();
 });
-
