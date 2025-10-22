@@ -12,7 +12,7 @@ class Config:
     
     # MongoDB
     MONGODB_URI = os.getenv('MONGODB_URI', 'mongodb+srv://laia:mongo2025@dataforai.iqsajt7.mongodb.net/?retryWrites=true&w=majority&appName=DataforAI')
-    MONGODB_DB_NAME = os.getenv('MONGODB_DB_NAME', 'datagen')
+    MONGODB_DB_NAME = os.getenv('aidb', 'datagen')
     
     # Verificación de variables
     if not GEMINI_API_KEY:
