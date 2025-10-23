@@ -5,43 +5,30 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Web Dev AI</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
-    <link rel="stylesheet" href="static/style.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-    <!-- Overlay para el fondo oscuro cuando el sidebar está abierto en móviles -->
     <div class="sidebar-overlay" id="sidebar-overlay"></div>
 
-    <!-- Sidebar -->
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <button class="new-chat-btn" id="new-chat-btn">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="12" y1="5" x2="12" y2="19"></line>
-                    <line x1="5" y1="12" x2="19" y2="12"></line>
-                </svg>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
                 Nueva conversación
             </button>
         </div>
-        <nav class="conversations-list" id="conversations-list">
-            <!-- Las conversaciones se cargarán aquí dinámicamente -->
-        </nav>
+        <nav class="conversations-list" id="conversations-list"></nav>
     </aside>
 
-    <!-- Contenido Principal -->
     <div class="main-container">
-        <!-- Header -->
         <header class="header">
             <button class="menu-btn" id="toggle-sidebar">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="3" y1="12" x2="21" y2="12"></line>
-                    <line x1="3" y1="6" x2="21" y2="6"></line>
-                    <line x1="3" y1="18" x2="21" y2="18"></line>
-                </svg>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
             </button>
             <h1>Web Dev AI</h1>
+            <a href="/logout" class="btn logout-btn">Cerrar Sesión</a>
         </header>
 
-        <!-- Área de Chat -->
         <main class="chat-container" id="chat-container">
             <div class="empty-state">
                 <div class="empty-state-icon">💬</div>
@@ -50,64 +37,34 @@
             </div>
         </main>
 
-        <!-- Área de Input -->
         <footer class="input-area">
             <form class="input-container" id="chat-form">
-                <textarea 
-                    id="chat-input" 
-                    placeholder="Escribe tu mensaje..."
-                    rows="1"
-                    aria-label="Caja de texto para el chat"
-                ></textarea>
+                <textarea id="chat-input" placeholder="Escribe tu mensaje..." rows="1"></textarea>
                 <button type="submit" id="send-btn" aria-label="Enviar mensaje">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <line x1="22" y1="2" x2="11" y2="13"></line>
-                        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-                    </svg>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
                 </button>
             </form>
         </footer>
     </div>
 
-    <!-- Modal de Vista Previa MEJORADO -->
+    <!-- Modales -->
     <div class="modal" id="preview-modal">
         <div class="modal-content">
             <div class="modal-header">
                 <h2>Vista previa del código</h2>
                 <div class="modal-actions">
-                    <button class="icon-btn" id="copy-code-btn" aria-label="Copiar código" title="Copiar código">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                        </svg>
-                    </button>
-                    <button class="icon-btn" id="download-code-btn" aria-label="Descargar código" title="Descargar HTML">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                            <polyline points="7 10 12 15 17 10"></polyline>
-                            <line x1="12" y1="15" x2="12" y2="3"></line>
-                        </svg>
-                    </button>
+                    <!-- Botones de Copiar y Descargar ya no están aquí -->
                     <button class="close-btn" id="close-modal" aria-label="Cerrar modal">&times;</button>
                 </div>
             </div>
-            <iframe 
-                id="runner-frame" 
-                title="Vista previa de código HTML"
-                sandbox="allow-scripts allow-forms"
-            ></iframe>
+            <iframe id="runner-frame" title="Vista previa de código HTML"></iframe>
         </div>
     </div>
     
-    <!-- Modal de Confirmación para eliminar -->
     <div class="modal" id="delete-confirm-modal">
         <div class="modal-content small">
-            <div class="modal-header">
-                <h2>Confirmar eliminación</h2>
-            </div>
-            <div class="modal-body">
-                <p>¿Estás seguro de que quieres eliminar esta conversación? Esta acción no se puede deshacer.</p>
-            </div>
+            <div class="modal-header"><h2>Confirmar eliminación</h2></div>
+            <div class="modal-body"><p>¿Estás seguro? Esta acción no se puede deshacer.</p></div>
             <div class="modal-footer">
                 <button class="btn" id="cancel-delete-btn">Cancelar</button>
                 <button class="btn btn-danger" id="confirm-delete-btn">Eliminar</button>
@@ -117,6 +74,7 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/markdown-it@14.0.0/dist/markdown-it.min.js"></script>
-    <script src="static/js/script.js"></script>
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
 </body>
 </html>
+

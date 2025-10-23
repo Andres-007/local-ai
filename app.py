@@ -1,170 +1,205 @@
-from flask import Flask, render_template, request, jsonify, session, Response
+from flask import Flask, render_template, request, jsonify, session, Response, redirect, url_for
 from flask_cors import CORS
 from model.model import WebDevAI
 from model.database import ChatDatabase
+from werkzeug.security import generate_password_hash, check_password_hash
+from functools import wraps
 import secrets
 import os
+from bson.objectid import ObjectId
 
 app = Flask(__name__, template_folder='web/templates', static_folder='web/static')
+# Es crucial tener una clave secreta segura en producción
 app.secret_key = os.getenv('SECRET_KEY', secrets.token_hex(16))
 
-# Habilitar CORS
-CORS(app, resources={
-    r"/api/*": {
-        "origins": ["https://*.io", "http://localhost:5000"],
-        "supports_credentials": True
-    }
-})
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 # Inicializar servicios
 ai_model = WebDevAI()
 db = ChatDatabase()
 
+# --- Decorador para rutas protegidas ---
+def login_required(f):
+    """
+    Asegura que un usuario esté logueado antes de acceder a una ruta.
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            # Si es una petición de API, devuelve un error JSON
+            if request.path.startswith('/api/'):
+                return jsonify({"error": "Autenticación requerida"}), 401
+            # Para páginas normales, redirige al login
+            return redirect(url_for('index'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+# --- Rutas de Autenticación y Vistas ---
 @app.route('/')
 def index():
-    """Ruta principal"""
-    # Generar user_id único si no existe
-    if 'user_id' not in session:
-        session['user_id'] = secrets.token_hex(8)
+    """
+    Muestra la página de inicio/login si el usuario no está en sesión.
+    Si ya está logueado, lo redirige al chat.
+    """
+    if 'user_id' in session:
+        return redirect(url_for('chat'))
+    return render_template('login.html')
+
+@app.route('/chat')
+@login_required
+def chat():
+    """
+    Ruta principal de la aplicación de chat, protegida por login.
+    """
     return render_template('index.html')
 
+@app.route('/login', methods=['POST'])
+def login():
+    """
+    Maneja el proceso de inicio de sesión del usuario.
+    """
+    data = request.get_json()
+    email = data.get('email')
+    password = data.get('password')
+
+    if not email or not password:
+        return jsonify({"error": "Email y contraseña son requeridos"}), 400
+
+    user = db.get_user_by_email(email)
+
+    if user and check_password_hash(user['password'], password):
+        session['user_id'] = str(user['_id'])
+        session['user_email'] = user['email']
+        return jsonify({"message": "Inicio de sesión exitoso"}), 200
+    
+    return jsonify({"error": "Credenciales inválidas"}), 401
+
+@app.route('/register', methods=['POST'])
+def register():
+    """
+    Maneja el registro de un nuevo usuario.
+    """
+    data = request.get_json()
+    email = data.get('email')
+    password = data.get('password')
+
+    if not email or not password:
+        return jsonify({"error": "Email y contraseña son requeridos"}), 400
+
+    if db.get_user_by_email(email):
+        return jsonify({"error": "El email ya está registrado"}), 409
+
+    hashed_password = generate_password_hash(password)
+    user_id = db.create_user(email, hashed_password)
+    
+    session['user_id'] = user_id
+    session['user_email'] = email
+
+    return jsonify({"message": "Registro exitoso", "user_id": user_id}), 201
+
+@app.route('/logout')
+def logout():
+    """
+    Cierra la sesión del usuario.
+    """
+    session.clear()
+    return redirect(url_for('index'))
+
+@app.route('/api/check_auth')
+def check_auth():
+    """
+    Endpoint para que el frontend verifique si hay una sesión activa.
+    """
+    if 'user_id' in session:
+        return jsonify({"authenticated": True, "email": session.get('user_email')})
+    return jsonify({"authenticated": False})
+
+
+# --- Rutas de la API (Protegidas) ---
 @app.route('/api/conversations', methods=['GET'])
+@login_required
 def get_conversations():
-    """Obtiene todas las conversaciones del usuario"""
-    user_id = session.get('user_id', 'anonymous')
+    """Obtiene todas las conversaciones del usuario logueado."""
+    user_id = session['user_id']
     conversations = db.get_user_conversations(user_id)
     return jsonify({"conversations": conversations})
 
-@app.route('/api/conversations', methods=['POST'])
-def create_conversation():
-    """Crea una nueva conversación"""
-    user_id = session.get('user_id', 'anonymous')
-    data = request.get_json()
-    title = data.get('title', 'Nueva Conversación')
-    
-    conversation_id = db.create_conversation(user_id, title)
-    return jsonify({"conversation_id": conversation_id})
-
 @app.route('/api/conversations/<conversation_id>', methods=['GET'])
+@login_required
 def get_conversation(conversation_id):
-    """Obtiene una conversación específica con sus mensajes"""
+    """Obtiene una conversación específica si pertenece al usuario."""
     conversation = db.get_conversation_with_messages(conversation_id)
-    if not conversation:
-        return jsonify({"error": "Conversación no encontrada"}), 404
+    if not conversation or conversation['user_id'] != session['user_id']:
+        return jsonify({"error": "Conversación no encontrada o no autorizada"}), 404
     return jsonify(conversation)
 
 @app.route('/api/conversations/<conversation_id>', methods=['DELETE'])
+@login_required
 def delete_conversation(conversation_id):
-    """Elimina una conversación"""
-    success = db.delete_conversation(conversation_id)
+    """Elimina una conversación si pertenece al usuario."""
+    success = db.delete_conversation(conversation_id, session['user_id'])
     if success:
         return jsonify({"message": "Conversación eliminada"})
-    return jsonify({"error": "No se pudo eliminar"}), 400
-
-@app.route('/api/conversations/<conversation_id>/title', methods=['PUT'])
-def update_conversation_title(conversation_id):
-    """Actualiza el título de una conversación"""
-    data = request.get_json()
-    new_title = data.get('title')
-    
-    if not new_title:
-        return jsonify({"error": "Título requerido"}), 400
-    
-    success = db.update_conversation_title(conversation_id, new_title)
-    if success:
-        return jsonify({"message": "Título actualizado"})
-    return jsonify({"error": "No se pudo actualizar"}), 400
+    return jsonify({"error": "No se pudo eliminar o no tienes permiso"}), 400
 
 @app.route('/api/generate', methods=['POST'])
+@login_required
 def api_generate():
-    """Endpoint principal para generar respuestas de la IA (respuesta completa)"""
-    if not request.is_json:
-        return jsonify({"error": "La solicitud debe ser JSON"}), 400
-
+    """Genera respuestas de la IA (respuesta completa) para el usuario logueado."""
     data = request.get_json()
     prompt = data.get('prompt')
-    conversation_id = data.get('conversation_id')
+    conversation_id_str = data.get('conversation_id')
+    user_id = session['user_id']
     
     if not prompt:
         return jsonify({"error": "Falta el parámetro 'prompt'"}), 400
 
     try:
-        # Si no hay conversation_id, crear una nueva conversación
-        if not conversation_id:
-            user_id = session.get('user_id', 'anonymous')
-            # Generar título automático del primer mensaje
+        if not conversation_id_str:
             title = prompt[:50] + "..." if len(prompt) > 50 else prompt
-            conversation_id = db.create_conversation(user_id, title)
+            conversation_id_str = db.create_conversation(user_id, title)
         
-        # Guardar el mensaje del usuario
+        conversation_id = ObjectId(conversation_id_str)
         db.save_message(conversation_id, 'user', prompt)
-        
-        # Generar respuesta de la IA
         response_text = ai_model.generate(prompt)
-        
-        # Guardar la respuesta de la IA
         db.save_message(conversation_id, 'bot', response_text)
         
         return jsonify({
             "response": response_text,
-            "conversation_id": conversation_id
+            "conversation_id": conversation_id_str
         })
-        
     except Exception as e:
         print(f"Error en la API: {e}")
         return jsonify({"error": "Error interno del servidor"}), 500
 
 @app.route('/api/generate-stream', methods=['POST'])
+@login_required
 def api_generate_stream():
-    """Endpoint para generar respuestas de la IA en streaming"""
-    if not request.is_json:
-        return jsonify({"error": "La solicitud debe ser JSON"}), 400
-
+    """Genera respuestas de la IA en streaming para el usuario logueado."""
     data = request.get_json()
     prompt = data.get('prompt')
-    conversation_id = data.get('conversation_id')
+    conversation_id_str = data.get('conversation_id')
     
-    if not prompt:
-        return jsonify({"error": "Falta el parámetro 'prompt'"}), 400
-    
-    if not conversation_id:
-        return jsonify({"error": "Se requiere conversation_id para streaming"}), 400
+    if not prompt or not conversation_id_str:
+        return jsonify({"error": "Faltan 'prompt' o 'conversation_id'"}), 400
 
     def generate():
-        """Generador que envía chunks de texto y guarda al final"""
         full_response = ""
         try:
-            # Guardar el mensaje del usuario
+            conversation_id = ObjectId(conversation_id_str)
             db.save_message(conversation_id, 'user', prompt)
             
-            # Generar y transmitir respuesta en streaming
             for chunk in ai_model.generate_stream(prompt):
                 full_response += chunk
                 yield chunk
             
-            # Guardar la respuesta completa de la IA en la base de datos
             db.save_message(conversation_id, 'bot', full_response)
-            
         except Exception as e:
             error_msg = f"Error: {str(e)}"
             print(f"Error en streaming: {e}")
             yield error_msg
-            db.save_message(conversation_id, 'bot', error_msg)
     
     return Response(generate(), mimetype='text/plain')
-
-@app.route('/api/search', methods=['POST'])
-def search_conversations():
-    """Busca en las conversaciones del usuario"""
-    user_id = session.get('user_id', 'anonymous')
-    data = request.get_json()
-    query = data.get('query', '')
-    
-    if not query:
-        return jsonify({"error": "Query requerido"}), 400
-    
-    results = db.search_conversations(user_id, query)
-    return jsonify({"results": results})
 
 if __name__ == '__main__':
     app.run(debug=True)
