@@ -123,27 +123,26 @@
 
     <!-- Modal de Detalle de Proyecto -->
     <div class="modal-overlay" id="projectDetailsModal">
-        <div class="modal-container">
-            <button class="modal-close" id="closeProjectModalBtn">&times;</button>
-            <div class="modal-header">
-                 <h3 id="projectDetailsTitle"></h3>
-                <div class="modal-tabs" id="projectDetailsTabs">
-                    <div class="modal-tab active" data-tab="preview">Previsualización</div>
-                    <div class="modal-tab" data-tab="code">Código</div>
-                </div>
+    <div class="modal-container">
+        <button class="modal-close" id="closeProjectModalBtn">&times;</button>
+        <div class="modal-header">
+            <h3 id="projectDetailsTitle"></h3>
+            <div class="modal-tabs" id="projectDetailsTabs">
+                <div class="modal-tab active" data-tab="preview">Previsualización</div>
+                <div class="modal-tab" data-tab="code">Código</div>
             </div>
-            <div class="modal-body">
-                <!-- AÑADIDO data-tab="preview" -->
-                <div class="modal-content active" id="projectPreviewContainer" data-tab="preview">
-                    <iframe id="projectPreview" src="about:blank" frameborder="0" loading="lazy" sandbox="allow-scripts allow-same-origin allow-popups"></iframe>
-                </div>
-                <!-- AÑADIDO data-tab="code" -->
-                <div class="modal-content" id="projectCodeContainer" data-tab="code">
-                    <pre><code id="projectCode" class="hljs"></code></pre>
-                </div>
+        </div>
+        <div class="modal-body">
+            <!-- CORREGIDO: Ahora usa los IDs correctos que coinciden con CSS y JS -->
+            <div id="projectPreviewContainer" class="active">
+                <iframe id="projectPreview" src="about:blank" frameborder="0" loading="lazy" sandbox="allow-scripts allow-same-origin allow-popups"></iframe>
+            </div>
+            <div id="projectCodeContainer">
+                <pre><code id="projectCode" class="active"></code></pre>
             </div>
         </div>
     </div>
+</div>
 
     <!-- JS de Librerías Externas -->
     <script src="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.js"></script>

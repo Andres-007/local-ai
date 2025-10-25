@@ -18,7 +18,7 @@ body { font-family: var(--font-principal); background-color: var(--color-fondo);
 .btn-secondary { background-color: transparent; color: var(--color-texto); border: 1px solid var(--color-superficie); }
 .btn-secondary:hover { background-color: var(--color-superficie); color: white; }
 
-/* --- ANIMACION --- */
+/* --- ANIMACIÓN --- */
 .fade-in { opacity: 0; transform: translateY(30px); transition: opacity 0.6s ease-out, transform 0.6s ease-out; }
 .fade-in.visible { opacity: 1; transform: translateY(0); }
 
@@ -29,22 +29,22 @@ body { font-family: var(--font-principal); background-color: var(--color-fondo);
 .logo span { color: var(--color-primario); }
 .auth-buttons { display: flex; gap: 1rem; }
 
-/* --- SECCION HERO --- */
+/* --- SECCIÓN HERO --- */
 #hero { padding-top: 150px; padding-bottom: 100px; text-align: center; }
 #hero h1 { 
-            font-size: 3.5rem; 
-            font-weight: 700; 
-            line-height: 1.2; 
-            margin-bottom: 1rem; 
-            background: linear-gradient(90deg, var(--color-secundario), var(--color-primario)); 
-            -webkit-background-clip: text; 
-            background-clip: text;
-            -webkit-text-fill-color: transparent; 
-        }
+    font-size: 3.5rem; 
+    font-weight: 700; 
+    line-height: 1.2; 
+    margin-bottom: 1rem; 
+    background: linear-gradient(90deg, var(--color-secundario), var(--color-primario)); 
+    -webkit-background-clip: text; 
+    background-clip: text; /* <-- ¡AÑADIDO! */
+    -webkit-text-fill-color: transparent; 
+}
 #hero p { font-size: 1.2rem; max-width: 700px; margin: 0 auto 2.5rem; color: var(--color-texto-secundario); }
 .hero-actions { display: flex; justify-content: center; align-items: center; gap: 1rem; flex-wrap: wrap; }
 
-/* --- SECCION CAPACIDADES --- */
+/* --- SECCIÓN CAPACIDADES --- */
 #capabilities { padding: 80px 0; }
 .section-title { text-align: center; font-size: 2.5rem; font-weight: 700; margin-bottom: 50px; }
 .capabilities-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 2rem; }
@@ -53,7 +53,7 @@ body { font-family: var(--font-principal); background-color: var(--color-fondo);
 .capability-card h3 { font-size: 1.5rem; margin-bottom: 1rem; color: var(--color-texto); }
 .capability-card p { color: var(--color-texto-secundario); }
 
-/* --- SECCION PROYECTOS (CARRUSEL) --- */
+/* --- SECCIÓN PROYECTOS (CARRUSEL) --- */
 #projects {
     padding: 80px 0;
     background-color: #12121e;
@@ -129,6 +129,7 @@ body { font-family: var(--font-principal); background-color: var(--color-fondo);
     text-align: center;
     color: var(--color-texto-secundario);
     padding: 2rem;
+    width: 100%;
 }
 
 /* --- MODALES GENERALES --- */
@@ -213,7 +214,7 @@ body { font-family: var(--font-principal); background-color: var(--color-fondo);
 
 /* Modal Auth */
 #authModal .modal-container {
-     max-width: 400px; 
+    max-width: 400px; 
 }
 .form-container { display: none; }
 .form-container.active { display: block; }
@@ -224,77 +225,121 @@ body { font-family: var(--font-principal); background-color: var(--color-fondo);
 .form-submit { width: 100%; padding: 14px; font-size: 1rem; }
 .error-message { color: #ff5c5c; text-align: center; margin-bottom: 1rem; display: none; }
 
-/* --- MODAL DE DETALLE DE PROYECTO --- */
+/* --- MODAL DE DETALLE DE PROYECTO - SECCIÓN CORREGIDA --- */
 #projectDetailsModal .modal-container {
     max-width: 95%;
     width: 1200px;
-    max-height: 90vh; 
+    /* max-height: 90vh; */ /* <-- ELIMINADO */
+    height: 90vh; /* <-- AÑADIDO: Fuerza la altura, igual que en tu chatbot */
     display: flex;
     flex-direction: column;
     padding: 0; 
+    min-height: 0; /* <-- ¡¡LA LÍNEA QUE FALTABA!! */
 }
 #projectDetailsModal .modal-header {
     padding: 1rem 2rem;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-shrink: 0; /* AÑADIDO: Evita que el header se comprima */
 }
 #projectDetailsTitle {
     font-size: 1.5rem;
     color: var(--color-texto);
     margin: 0;
 }
-/* modal-body ahora solo muestra un contenedor a la vez */
+/* CORREGIDO: Volvemos a 'flex' (como en tu chatbot) y quitamos 'grid' */
 #projectDetailsModal .modal-body {
     padding: 0; 
-    flex-grow: 1; 
-    display: flex;
+    flex-grow: 1; /* El body crece para llenar el modal */
+    display: flex; /* <-- CAMBIO: De vuelta a flex */
     overflow: hidden;
+    min-height: 0; /* Hack de Flexbox (Nivel 1) */
 }
-
-/* Contenedores de previsualizacion y codigo - ahora se ocultan por defecto */
+/* CORREGIDO: Los contenedores ya no usan 'grid' */
 #projectPreviewContainer,
 #projectCodeContainer {
     display: none; /* Ocultos por defecto */
-    width: 100%; /* Ocupan todo el ancho cuando están activos */
-    display: auto;
-    flex-direction: column;
-    overflow: auto;
-    padding: 1.5rem;
-}
+    width: 100%; 
+    /* height: 100%; */ /* <-- ELIMINADO */
+    
+    /* <-- ELIMINADO: Ya no usamos grid */
+    /* grid-column: 1 / -1; */
+    /* grid-row: 1 / -1; */
 
-/* Solo el contenedor con clase 'active' se muestra */
+    flex-direction: column;
+    padding: 0; 
+}
+/* CORREGIDO: Esta es la lógica principal (copiada de tu chatbot)
+   El contenedor ACTIVO es el que usa flex-grow para expandirse. */
 #projectPreviewContainer.active,
 #projectCodeContainer.active {
-    display: flex;
+    display: flex; 
+    flex-grow: 1; /* <-- AÑADIDO: El contenedor activo llena el modal-body */
+    min-height: 0; /* Hack de Flexbox (Nivel 2) */
 }
-
-#projectPreviewContainer {
-    background-color: var(--color-fondo);
-}
-#projectCodeContainer {
-     background-color: #282c34;
-}
-
-#projectPreview iframe {
+/* CORREGIDO: El iframe usa flex-grow (como en tu chatbot) */
+#projectPreviewContainer iframe {
     width: 100%;
-    flex-grow: 1;
+    /* height: 100%; */ /* <-- ELIMINADO: Redundante con flex-grow y causa conflictos */
     border: none;
     background-color: #fff;
+    flex-grow: 1; /* <-- Esta es la única regla de altura necesaria */
+}
+#projectCodeContainer {
+    background-color: #282c34;
+    padding: 1.5rem; /* AÑADIDO: Padding solo en el contenedor de código */
+    box-sizing: border-box; /* AÑADIDO: Para que el padding no afecte el layout */
+    overflow: auto; /* <-- AÑADIDO: El contenedor de código debe ser desplazable */
+}
+/* CORREGIDO: El pre y code ahora ocupan todo el alto disponible */
+#projectCode {
+    display: block;
+    /* height: 100%; */ /* <-- ELIMINADO */
+    margin: 0;
+    /* overflow: auto; */ /* <-- ELIMINADO: Se movió al padre #projectCodeContainer */
 }
 #projectCode pre {
     background-color: transparent !important; 
     padding: 0 !important;
     margin: 0;
-    overflow: auto; 
-    flex-grow: 1; 
+    /* height: 100%; */ /* <-- ELIMINADO */
 }
 #projectCode code {
     font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
     font-size: 0.9rem;
     white-space: pre; 
+    display: block; /* AÑADIDO: Hace que el código se comporte como bloque */
+}
+/* AÑADIDO: Estilos responsivos para pantallas pequeñas */
+@media (max-width: 768px) {
+    #projectDetailsModal .modal-container {
+        max-width: 100%;
+        width: 100%;
+        max-height: 100vh;
+        border-radius: 0;
+    }
+    
+    #projectDetailsModal .modal-header {
+        padding: 1rem;
+    }
+    
+    #projectDetailsTitle {
+        font-size: 1.2rem;
+    }
+
+    #projectCodeContainer {
+        padding: 1rem; /* Menos padding en móvil */
+    }
 }
 
 
 /* --- FOOTER --- */
 .main-footer { text-align: center; padding: 2rem 0; margin-top: 60px; border-top: 1px solid var(--color-superficie); color: var(--color-texto-secundario); }
+
+
+
+
+
+
+
