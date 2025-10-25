@@ -18,7 +18,7 @@ body { font-family: var(--font-principal); background-color: var(--color-fondo);
 .btn-secondary { background-color: transparent; color: var(--color-texto); border: 1px solid var(--color-superficie); }
 .btn-secondary:hover { background-color: var(--color-superficie); color: white; }
 
-/* --- ANIMACIÓN --- */
+/* --- ANIMACION --- */
 .fade-in { opacity: 0; transform: translateY(30px); transition: opacity 0.6s ease-out, transform 0.6s ease-out; }
 .fade-in.visible { opacity: 1; transform: translateY(0); }
 
@@ -29,13 +29,22 @@ body { font-family: var(--font-principal); background-color: var(--color-fondo);
 .logo span { color: var(--color-primario); }
 .auth-buttons { display: flex; gap: 1rem; }
 
-/* --- SECCIÓN HERO --- */
+/* --- SECCION HERO --- */
 #hero { padding-top: 150px; padding-bottom: 100px; text-align: center; }
-#hero h1 { font-size: 3.5rem; font-weight: 700; line-height: 1.2; margin-bottom: 1rem; background: linear-gradient(90deg, var(--color-secundario), var(--color-primario)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+#hero h1 { 
+            font-size: 3.5rem; 
+            font-weight: 700; 
+            line-height: 1.2; 
+            margin-bottom: 1rem; 
+            background: linear-gradient(90deg, var(--color-secundario), var(--color-primario)); 
+            -webkit-background-clip: text; 
+            background-clip: text;
+            -webkit-text-fill-color: transparent; 
+        }
 #hero p { font-size: 1.2rem; max-width: 700px; margin: 0 auto 2.5rem; color: var(--color-texto-secundario); }
 .hero-actions { display: flex; justify-content: center; align-items: center; gap: 1rem; flex-wrap: wrap; }
 
-/* --- SECCIÓN CAPACIDADES --- */
+/* --- SECCION CAPACIDADES --- */
 #capabilities { padding: 80px 0; }
 .section-title { text-align: center; font-size: 2.5rem; font-weight: 700; margin-bottom: 50px; }
 .capabilities-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 2rem; }
@@ -44,7 +53,7 @@ body { font-family: var(--font-principal); background-color: var(--color-fondo);
 .capability-card h3 { font-size: 1.5rem; margin-bottom: 1rem; color: var(--color-texto); }
 .capability-card p { color: var(--color-texto-secundario); }
 
-/* --- SECCIÓN PROYECTOS (CARRUSEL) --- */
+/* --- SECCION PROYECTOS (CARRUSEL) --- */
 #projects {
     padding: 80px 0;
     background-color: #12121e;
@@ -243,11 +252,12 @@ body { font-family: var(--font-principal); background-color: var(--color-fondo);
     overflow: hidden;
 }
 
-/* Contenedores de previsualización y código - ahora se ocultan por defecto */
+/* Contenedores de previsualizacion y codigo - ahora se ocultan por defecto */
 #projectPreviewContainer,
 #projectCodeContainer {
     display: none; /* Ocultos por defecto */
     width: 100%; /* Ocupan todo el ancho cuando están activos */
+    display: auto;
     flex-direction: column;
     overflow: auto;
     padding: 1.5rem;
