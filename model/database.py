@@ -1,12 +1,12 @@
 from pymongo import MongoClient
 from datetime import datetime
-from config import Config
+from config import Config  # Asumo que tienes tu URI de Mongo en config.py
 from bson.objectid import ObjectId
 
 class ChatDatabase:
     """
     Clase para manejar la conexión y operaciones con MongoDB,
-    incluyendo la gestión de usuarios.
+    incluyendo la gestión de usuarios, chats y proyectos.
     """
     def __init__(self):
         """Inicializa la conexión a MongoDB y las colecciones"""
@@ -15,21 +15,20 @@ class ChatDatabase:
             self.db = self.client[Config.MONGODB_DB_NAME]
             self.conversations = self.db['conversations']
             self.messages = self.db['messages']
-            self.users = self.db['users']  # Nueva colección para usuarios
+            self.users = self.db['users']
+            
+            # --- NUEVA COLECCIÓN ---
+            self.projects = self.db['projects'] # Nueva colección para los proyectos del carrusel
+            
             print("✅ Conexión exitosa a MongoDB")
         except Exception as e:
             print(f"❌ Error al conectar con MongoDB: {e}")
             self.client = None
 
-    # --- Métodos de Usuario ---
+    # --- Métodos de Usuario (sin cambios) ---
     def create_user(self, email, password_hash):
         """
         Crea un nuevo usuario en la base de datos.
-        Args:
-            email (str): Email del usuario.
-            password_hash (str): Hash de la contraseña del usuario.
-        Returns:
-            str: El ID del usuario creado.
         """
         user_data = {
             'email': email.lower(),
@@ -50,9 +49,8 @@ class ChatDatabase:
         except:
             return None
 
-    # --- Métodos de Conversación (Actualizados) ---
+    # --- Métodos de Conversación (sin cambios) ---
     def create_conversation(self, user_id, title="Nueva Conversación"):
-        """Crea una nueva conversación asociada a un user_id."""
         conversation = {
             'user_id': user_id,
             'title': title,
@@ -63,7 +61,6 @@ class ChatDatabase:
         return str(result.inserted_id)
 
     def save_message(self, conversation_id, role, content):
-        """Guarda un mensaje en una conversación."""
         message = {
             'conversation_id': conversation_id, # Se espera un ObjectId
             'role': role,
@@ -77,7 +74,6 @@ class ChatDatabase:
         )
 
     def get_conversation_history(self, conversation_id):
-        """Obtiene el historial de mensajes de una conversación."""
         messages = list(self.messages.find(
             {'conversation_id': ObjectId(conversation_id)}
         ).sort('timestamp', 1))
@@ -88,7 +84,6 @@ class ChatDatabase:
         return messages
 
     def get_user_conversations(self, user_id):
-        """Obtiene todas las conversaciones de un usuario."""
         conversations = list(self.conversations.find(
             {'user_id': user_id}
         ).sort('updated_at', -1))
@@ -98,7 +93,6 @@ class ChatDatabase:
         return conversations
 
     def delete_conversation(self, conversation_id, user_id):
-        """Elimina una conversación y sus mensajes, verificando el propietario."""
         try:
             conv_obj_id = ObjectId(conversation_id)
             conversation = self.conversations.find_one({
@@ -115,7 +109,6 @@ class ChatDatabase:
             return False
 
     def get_conversation_with_messages(self, conversation_id):
-        """Obtiene una conversación completa con sus mensajes."""
         try:
             conv_obj_id = ObjectId(conversation_id)
             conversation = self.conversations.find_one({'_id': conv_obj_id})
@@ -127,3 +120,34 @@ class ChatDatabase:
             return conversation
         except:
             return None
+
+    # --- NUEVOS MÉTODOS PARA PROYECTOS ---
+
+    def create_project(self, title, description, imageUrl, projectUrl, codeSnippet):
+        """
+        Crea un nuevo proyecto en la base de datos.
+        """
+        project_data = {
+            'title': title,
+            'description': description,
+            'imageUrl': imageUrl,
+            'projectUrl': projectUrl,
+            'codeSnippet': codeSnippet,
+            'created_at': datetime.utcnow()
+        }
+        result = self.projects.insert_one(project_data)
+        return str(result.inserted_id)
+
+    def get_all_projects(self):
+        """
+        Obtiene todos los proyectos de la base de datos, ordenados por fecha.
+        """
+        try:
+            # Ordena por 'created_at' descendente para mostrar los más nuevos primero
+            projects = list(self.projects.find().sort('created_at', -1))
+            for proj in projects:
+                proj['_id'] = str(proj['_id']) # Convertir ObjectId a string para JSON
+            return projects
+        except Exception as e:
+            print(f"❌ Error al obtener proyectos: {e}")
+            return []

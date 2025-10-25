@@ -1,80 +1,22 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es" class="scroll-smooth">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Web Dev AI</title>
+    
+    <!-- Google Fonts: Poppins -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <style>
-        /* --- ESTILOS GENERALES --- */
-        :root {
-            --color-primario: #4a00e0;
-            --color-secundario: #8e2de2;
-            --color-fondo: #0f0f1a;
-            --color-superficie: #1c1c2b;
-            --color-texto: #f0f0f5;
-            --color-texto-secundario: #a0a0b5;
-            --font-principal: 'Poppins', sans-serif;
-        }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        html { scroll-behavior: smooth; }
-        body { font-family: var(--font-principal); background-color: var(--color-fondo); color: var(--color-texto); line-height: 1.7; }
-        .container { max-width: 1100px; margin: 0 auto; padding: 0 20px; }
-        .btn { display: inline-block; padding: 12px 28px; font-weight: 600; border-radius: 5px; text-decoration: none; transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease; cursor: pointer; border: none; font-size: 1rem; }
-        .btn-primary { background: linear-gradient(90deg, var(--color-secundario), var(--color-primario)); color: white; }
-        .btn-primary:hover { transform: translateY(-3px); box-shadow: 0 10px 20px rgba(74, 0, 224, 0.3); }
-        .btn-secondary { background-color: transparent; color: var(--color-texto); border: 1px solid var(--color-superficie); }
-        .btn-secondary:hover { background-color: var(--color-superficie); color: white; }
-        
-        /* --- ANIMACIÓN --- */
-        .fade-in { opacity: 0; transform: translateY(30px); transition: opacity 0.6s ease-out, transform 0.6s ease-out; }
-        .fade-in.visible { opacity: 1; transform: translateY(0); }
-        
-        /* --- HEADER --- */
-        .main-header { padding: 1rem 0; position: fixed; width: 100%; top: 0; z-index: 1000; background-color: rgba(15, 15, 26, 0.8); backdrop-filter: blur(10px); border-bottom: 1px solid var(--color-superficie); }
-        .main-header .container { display: flex; justify-content: space-between; align-items: center; }
-        .logo { font-size: 1.8rem; font-weight: 700; color: var(--color-texto); text-decoration: none; }
-        .logo span { color: var(--color-primario); }
-        .auth-buttons { display: flex; gap: 1rem; }
-        
-        /* --- SECCIÓN HERO --- */
-        #hero { padding-top: 150px; padding-bottom: 100px; text-align: center; }
-        #hero h1 { font-size: 3.5rem; font-weight: 700; line-height: 1.2; margin-bottom: 1rem; background: linear-gradient(90deg, var(--color-secundario), var(--color-primario)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        #hero p { font-size: 1.2rem; max-width: 700px; margin: 0 auto 2.5rem; color: var(--color-texto-secundario); }
-        .hero-actions { display: flex; justify-content: center; align-items: center; gap: 1rem; flex-wrap: wrap; }
-        
-        /* --- SECCIÓN CAPACIDADES --- */
-        #capabilities { padding: 80px 0; }
-        .section-title { text-align: center; font-size: 2.5rem; font-weight: 700; margin-bottom: 50px; }
-        .capabilities-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 2rem; }
-        .capability-card { background-color: var(--color-superficie); padding: 2rem; border-radius: 10px; border: 1px solid transparent; transition: transform 0.3s ease, border-color 0.3s ease; }
-        .capability-card:hover { transform: translateY(-5px); border-color: var(--color-primario); }
-        .capability-card h3 { font-size: 1.5rem; margin-bottom: 1rem; color: var(--color-texto); }
-        .capability-card p { color: var(--color-texto-secundario); }
-        
-        /* --- MODAL --- */
-        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.7); display: flex; justify-content: center; align-items: center; z-index: 2000; opacity: 0; visibility: hidden; transition: opacity 0.3s ease, visibility 0.3s ease; }
-        .modal-overlay.active { opacity: 1; visibility: visible; }
-        .modal-container { background-color: var(--color-superficie); padding: 2.5rem; border-radius: 10px; width: 90%; max-width: 400px; position: relative; transform: scale(0.9); transition: transform 0.3s ease; }
-        .modal-overlay.active .modal-container { transform: scale(1); }
-        .modal-close { position: absolute; top: 15px; right: 15px; font-size: 1.5rem; color: var(--color-texto-secundario); cursor: pointer; border: none; background: none; }
-        .modal-tabs { display: flex; margin-bottom: 1.5rem; border-bottom: 1px solid #333; }
-        .modal-tab { flex: 1; padding: 0.8rem; text-align: center; cursor: pointer; font-weight: 600; color: var(--color-texto-secundario); border-bottom: 2px solid transparent; }
-        .modal-tab.active { color: var(--color-texto); border-bottom-color: var(--color-primario); }
-        .form-container { display: none; }
-        .form-container.active { display: block; }
-        .form-group { margin-bottom: 1.2rem; }
-        .form-group label { display: block; margin-bottom: 0.5rem; font-weight: 600; }
-        .form-group input { width: 100%; padding: 12px; background-color: var(--color-fondo); border: 1px solid #333; border-radius: 5px; color: var(--color-texto); font-size: 1rem; }
-        .form-group input:focus { outline: none; border-color: var(--color-primario); }
-        .form-submit { width: 100%; padding: 14px; font-size: 1rem; }
-        .error-message { color: #ff5c5c; text-align: center; margin-bottom: 1rem; display: none; }
+    
+    <!-- CSS de Librerías Externas -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 
-        /* --- FOOTER --- */
-        .main-footer { text-align: center; padding: 2rem 0; margin-top: 60px; border-top: 1px solid var(--color-superficie); color: var(--color-texto-secundario); }
-    </style>
+    <!-- TU CSS PERSONALIZADO -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='stylelog.css') }}">
+
 </head>
 <body>
 
@@ -93,11 +35,11 @@
             <div class="container">
                 <h1 class="fade-in">Creando la Web del Futuro, Hoy.</h1>
                 <p class="fade-in" style="transition-delay: 0.2s;">
-                    Soy Web Dev AI, tu asistente experto en desarrollo full-stack. Genero, analizo y explico código frontend y backend para dar vida a tus ideas con velocidad y precisión.
+                    Soy Web Dev AI, tu asistente experto en desarrollo web. Genero, analizo y explico código frontend para dar vida a tus ideas con precisión.
                 </p>
                 <div class="hero-actions">
-                    <a href="/chat" id="startChatBtn" class="btn btn-primary fade-in" style="transition-delay: 0.4s;">Empezar a Crear</a>
-                    <a href="#capabilities" class="btn btn-secondary fade-in" style="transition-delay: 0.5s;">Ver Mis Capacidades</a>
+                    <a href="#projects" class="btn btn-primary fade-in" style="transition-delay: 0.4s;">Ver Proyectos</a>
+                    <a href="#capabilities" class="btn btn-secondary fade-in" style="transition-delay: 0.5s;">Ver Capacidades</a>
                 </div>
             </div>
         </section>
@@ -121,138 +63,101 @@
                 </div>
             </div>
         </section>
+
+        <section id="projects">
+            <div class="container">
+                <h2 class="section-title fade-in">Proyectos Destacados</h2>
+                
+                <div class="swiper-container fade-in" id="projectsCarousel" style="transition-delay: 0.1s;">
+                    <div class="swiper mySwiper">
+                        <div class="swiper-wrapper">
+                            <div class="projects-loading">Cargando proyectos...</div>
+                        </div>
+                        <div class="swiper-pagination"></div>
+                        <div class="swiper-button-next"></div>
+                        <div class="swiper-button-prev"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
     </main>
 
     <footer class="main-footer">
-        <p>&copy; 2024 Web Dev AI. Código generado con precisión.</p>
+        <p>&copy; 2025 Web Dev AI. Código generado con precisión.</p>
     </footer>
 
     <!-- Modal de Login/Registro -->
     <div class="modal-overlay" id="authModal">
         <div class="modal-container">
             <button class="modal-close" id="closeModalBtn">&times;</button>
-            <div class="modal-tabs">
-                <div class="modal-tab active" data-tab="login">Iniciar Sesión</div>
-                <div class="modal-tab" data-tab="register">Registrarse</div>
+            <div class="modal-header">
+                <div class="modal-tabs">
+                    <div class="modal-tab active" data-tab="login">Iniciar Sesión</div>
+                    <div class="modal-tab" data-tab="register">Registrarse</div>
+                </div>
             </div>
-            <p class="error-message" id="errorMessage"></p>
+            <div class="modal-body">
+                <p class="error-message" id="errorMessage"></p>
+                <!-- AÑADIDO data-tab="login" -->
+                <div class="form-container active" id="loginFormContainer" data-tab="login">
+                    <form id="loginForm">
+                        <div class="form-group"><label for="loginEmail">Email</label><input type="email" id="loginEmail" required></div>
+                        <div class="form-group"><label for="loginPassword">Contraseña</label><input type="password" id="loginPassword" required></div>
+                        <button type="submit" class="btn btn-primary form-submit">Entrar</button>
+                    </form>
+                </div>
 
-            <div class="form-container active" id="loginFormContainer">
-                <form id="loginForm">
-                    <div class="form-group"><label for="loginEmail">Email</label><input type="email" id="loginEmail" required></div>
-                    <div class="form-group"><label for="loginPassword">Contraseña</label><input type="password" id="loginPassword" required></div>
-                    <button type="submit" class="btn btn-primary form-submit">Entrar</button>
-                </form>
-            </div>
-
-            <div class="form-container" id="registerFormContainer">
-                <form id="registerForm">
-                    <div class="form-group"><label for="registerEmail">Email</label><input type="email" id="registerEmail" required></div>
-                    <div class="form-group"><label for="registerPassword">Contraseña</label><input type="password" id="registerPassword" required></div>
-                    <div class="form-group"><label for="registerConfirmPassword">Confirmar Contraseña</label><input type="password" id="registerConfirmPassword" required></div>
-                    <button type="submit" class="btn btn-primary form-submit">Crear Cuenta</button>
-                </form>
+                <!-- AÑADIDO data-tab="register" -->
+                <div class="form-container" id="registerFormContainer" data-tab="register">
+                    <form id="registerForm">
+                        <div class="form-group"><label for="registerEmail">Email</label><input type="email" id="registerEmail" required></div>
+                        <div class="form-group"><label for="registerPassword">Contraseña</label><input type="password" id="registerPassword" required></div>
+                        <div class="form-group"><label for="registerConfirmPassword">Confirmar Contraseña</label><input type="password" id="registerConfirmPassword" required></div>
+                        <button type="submit" class="btn btn-primary form-submit">Crear Cuenta</button>
+                    </form>
+                </div>
             </div>
         </div>
     </div>
 
-    <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const authModal = document.getElementById('authModal');
-        const loginBtn = document.getElementById('loginBtn');
-        const registerBtn = document.getElementById('registerBtn');
-        const closeModalBtn = document.getElementById('closeModalBtn');
-        const tabs = document.querySelectorAll('.modal-tab');
-        const formContainers = document.querySelectorAll('.form-container');
-        const errorMessage = document.getElementById('errorMessage');
+    <!-- Modal de Detalle de Proyecto -->
+    <div class="modal-overlay" id="projectDetailsModal">
+        <div class="modal-container">
+            <button class="modal-close" id="closeProjectModalBtn">&times;</button>
+            <div class="modal-header">
+                 <h3 id="projectDetailsTitle"></h3>
+                <div class="modal-tabs" id="projectDetailsTabs">
+                    <div class="modal-tab active" data-tab="preview">Previsualización</div>
+                    <div class="modal-tab" data-tab="code">Código</div>
+                </div>
+            </div>
+            <div class="modal-body">
+                <!-- AÑADIDO data-tab="preview" -->
+                <div class="modal-content active" id="projectPreviewContainer" data-tab="preview">
+                    <iframe id="projectPreview" src="about:blank" frameborder="0" loading="lazy" sandbox="allow-scripts allow-same-origin allow-popups"></iframe>
+                </div>
+                <!-- AÑADIDO data-tab="code" -->
+                <div class="modal-content" id="projectCodeContainer" data-tab="code">
+                    <pre><code id="projectCode" class="hljs"></code></pre>
+                </div>
+            </div>
+        </div>
+    </div>
 
-        const openModal = (activeTab) => {
-            errorMessage.style.display = 'none';
-            authModal.classList.add('active');
-            tabs.forEach(tab => tab.classList.remove('active'));
-            formContainers.forEach(form => form.classList.remove('active'));
-            document.querySelector(`.modal-tab[data-tab="${activeTab}"]`).classList.add('active');
-            document.getElementById(`${activeTab}FormContainer`).classList.add('active');
-        };
-        const closeModal = () => authModal.classList.remove('active');
-        
-        loginBtn.addEventListener('click', () => openModal('login'));
-        registerBtn.addEventListener('click', () => openModal('register'));
-        closeModalBtn.addEventListener('click', closeModal);
-        authModal.addEventListener('click', (e) => e.target === authModal && closeModal());
+    <!-- JS de Librerías Externas -->
+    <script src="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script> 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+    <script>hljs.highlightAll();</script>
 
-        tabs.forEach(tab => {
-            tab.addEventListener('click', () => {
-                openModal(tab.getAttribute('data-tab'));
-            });
-        });
-
-        // --- Lógica de Formularios ---
-        const showError = (message) => {
-            errorMessage.textContent = message;
-            errorMessage.style.display = 'block';
-        };
-
-        document.getElementById('loginForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            errorMessage.style.display = 'none';
-            const email = document.getElementById('loginEmail').value;
-            const password = document.getElementById('loginPassword').value;
-            
-            try {
-                const res = await fetch('/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, password })
-                });
-                const data = await res.json();
-                if (res.ok) {
-                    window.location.href = '/chat';
-                } else {
-                    showError(data.error || 'Error desconocido.');
-                }
-            } catch (err) { showError('Error de conexión.'); }
-        });
-        
-        document.getElementById('registerForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            errorMessage.style.display = 'none';
-            const email = document.getElementById('registerEmail').value;
-            const password = document.getElementById('registerPassword').value;
-            const confirm = document.getElementById('registerConfirmPassword').value;
-            
-            if (password !== confirm) {
-                showError('Las contraseñas no coinciden.');
-                return;
-            }
-
-            try {
-                const res = await fetch('/register', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, password })
-                });
-                const data = await res.json();
-                if (res.ok) {
-                    window.location.href = '/chat';
-                } else {
-                    showError(data.error || 'Error desconocido.');
-                }
-            } catch (err) { showError('Error de conexión.'); }
-        });
-
-        // --- Animación de Scroll ---
-        const faders = document.querySelectorAll('.fade-in');
-        const appearOnScroll = new IntersectionObserver((entries, observer) => {
-            entries.forEach(entry => {
-                if (!entry.isIntersecting) return;
-                entry.target.classList.add('visible');
-                observer.unobserve(entry.target);
-            });
-        }, { threshold: 0.2, rootMargin: "0px 0px -50px 0px" });
-        faders.forEach(fader => appearOnScroll.observe(fader));
-    });
-    </script>
+    <!-- TU JS PERSONALIZADO -->
+    <script src="{{ url_for('static', filename='js/jslog.js') }}" defer></script>
 
 </body>
 </html>
+

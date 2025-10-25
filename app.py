@@ -9,10 +9,10 @@ import os
 from bson.objectid import ObjectId
 
 app = Flask(__name__, template_folder='web/templates', static_folder='web/static')
-# Es crucial tener una clave secreta segura en producción
 app.secret_key = os.getenv('SECRET_KEY', secrets.token_hex(16))
 
-CORS(app, resources={r"/api/*": {"origins": "*"}})
+# Configuración de CORS más específica si es necesario, pero esto funciona para desarrollo
+CORS(app) 
 
 # Inicializar servicios
 ai_model = WebDevAI()
@@ -20,16 +20,11 @@ db = ChatDatabase()
 
 # --- Decorador para rutas protegidas ---
 def login_required(f):
-    """
-    Asegura que un usuario esté logueado antes de acceder a una ruta.
-    """
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if 'user_id' not in session:
-            # Si es una petición de API, devuelve un error JSON
             if request.path.startswith('/api/'):
                 return jsonify({"error": "Autenticación requerida"}), 401
-            # Para páginas normales, redirige al login
             return redirect(url_for('index'))
         return f(*args, **kwargs)
     return decorated_function
@@ -38,26 +33,24 @@ def login_required(f):
 @app.route('/')
 def index():
     """
-    Muestra la página de inicio/login si el usuario no está en sesión.
+    Muestra la página de inicio (login.html) si el usuario no está en sesión.
     Si ya está logueado, lo redirige al chat.
     """
     if 'user_id' in session:
         return redirect(url_for('chat'))
-    return render_template('login.html')
+    # Esta es la página que contiene el carrusel
+    return render_template('login.html') 
 
 @app.route('/chat')
 @login_required
 def chat():
     """
-    Ruta principal de la aplicación de chat, protegida por login.
+    Ruta principal de la aplicación de chat (index.html), protegida por login.
     """
-    return render_template('index.html')
+    return render_template('index.html') # Asumo que tu chat está en index.html
 
 @app.route('/login', methods=['POST'])
 def login():
-    """
-    Maneja el proceso de inicio de sesión del usuario.
-    """
     data = request.get_json()
     email = data.get('email')
     password = data.get('password')
@@ -76,9 +69,6 @@ def login():
 
 @app.route('/register', methods=['POST'])
 def register():
-    """
-    Maneja el registro de un nuevo usuario.
-    """
     data = request.get_json()
     email = data.get('email')
     password = data.get('password')
@@ -99,27 +89,37 @@ def register():
 
 @app.route('/logout')
 def logout():
-    """
-    Cierra la sesión del usuario.
-    """
     session.clear()
     return redirect(url_for('index'))
 
 @app.route('/api/check_auth')
 def check_auth():
-    """
-    Endpoint para que el frontend verifique si hay una sesión activa.
-    """
     if 'user_id' in session:
         return jsonify({"authenticated": True, "email": session.get('user_email')})
     return jsonify({"authenticated": False})
 
 
-# --- Rutas de la API (Protegidas) ---
+# --- NUEVA RUTA PÚBLICA PARA PROYECTOS ---
+@app.route('/api/projects', methods=['GET'])
+def get_projects():
+    """
+    Obtiene la lista de todos los proyectos para mostrar en el carrusel.
+    Esta es una ruta pública, no requiere autenticación,
+    ya que se muestra en la página de login (index).
+    """
+    try:
+        projects = db.get_all_projects()
+        # Devuelve los proyectos en un objeto JSON
+        return jsonify({"projects": projects})
+    except Exception as e:
+        print(f"Error en /api/projects: {e}")
+        return jsonify({"error": "Error interno al obtener proyectos"}), 500
+
+
+# --- Rutas de la API de Chat (Protegidas) ---
 @app.route('/api/conversations', methods=['GET'])
 @login_required
 def get_conversations():
-    """Obtiene todas las conversaciones del usuario logueado."""
     user_id = session['user_id']
     conversations = db.get_user_conversations(user_id)
     return jsonify({"conversations": conversations})
@@ -127,7 +127,6 @@ def get_conversations():
 @app.route('/api/conversations/<conversation_id>', methods=['GET'])
 @login_required
 def get_conversation(conversation_id):
-    """Obtiene una conversación específica si pertenece al usuario."""
     conversation = db.get_conversation_with_messages(conversation_id)
     if not conversation or conversation['user_id'] != session['user_id']:
         return jsonify({"error": "Conversación no encontrada o no autorizada"}), 404
@@ -136,7 +135,6 @@ def get_conversation(conversation_id):
 @app.route('/api/conversations/<conversation_id>', methods=['DELETE'])
 @login_required
 def delete_conversation(conversation_id):
-    """Elimina una conversación si pertenece al usuario."""
     success = db.delete_conversation(conversation_id, session['user_id'])
     if success:
         return jsonify({"message": "Conversación eliminada"})
@@ -145,7 +143,6 @@ def delete_conversation(conversation_id):
 @app.route('/api/generate', methods=['POST'])
 @login_required
 def api_generate():
-    """Genera respuestas de la IA (respuesta completa) para el usuario logueado."""
     data = request.get_json()
     prompt = data.get('prompt')
     conversation_id_str = data.get('conversation_id')
@@ -175,7 +172,6 @@ def api_generate():
 @app.route('/api/generate-stream', methods=['POST'])
 @login_required
 def api_generate_stream():
-    """Genera respuestas de la IA en streaming para el usuario logueado."""
     data = request.get_json()
     prompt = data.get('prompt')
     conversation_id_str = data.get('conversation_id')
@@ -202,4 +198,5 @@ def api_generate_stream():
     return Response(generate(), mimetype='text/plain')
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    # Asegúrate de que 'host' sea '0.0.0.0' si necesitas acceder desde otros dispositivos en la red
+    app.run(debug=True, host='0.0.0.0', port=5000)
