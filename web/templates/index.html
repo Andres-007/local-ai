@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Web Dev AI</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
     <div class="sidebar-overlay" id="sidebar-overlay"></div>
@@ -57,7 +57,7 @@
                     <button class="close-btn" id="close-modal" aria-label="Cerrar modal">&times;</button>
                 </div>
             </div>
-            <iframe id="runner-frame" src="about:blank" title="Vista previa de código HTML"></iframe>
+            <iframe id="runner-frame" src="about:blank" title="Vista previa de código HTML" sandbox="allow-scripts allow-forms allow-popups"></iframe>
         </div>
     </div>
     
@@ -74,7 +74,7 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/markdown-it@14.0.0/dist/markdown-it.min.js"></script>
-    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+    <script src="/static/js/script.js"></script>
 </body>
 </html>
 

@@ -20,9 +20,9 @@ class ChatDatabase:
             # --- NUEVA COLECCIÓN ---
             self.projects = self.db['projects'] # Nueva colección para los proyectos del carrusel
             
-            print("✅ Conexión exitosa a MongoDB")
+            print("Conexión exitosa a MongoDB")
         except Exception as e:
-            print(f"❌ Error al conectar con MongoDB: {e}")
+            print(f"Error al conectar con MongoDB: {e}")
             self.client = None
 
     # --- Métodos de Usuario (sin cambios) ---
@@ -149,5 +149,5 @@ class ChatDatabase:
                 proj['_id'] = str(proj['_id']) # Convertir ObjectId a string para JSON
             return projects
         except Exception as e:
-            print(f"❌ Error al obtener proyectos: {e}")
+            print(f"Error al obtener proyectos: {e}")
             return []
