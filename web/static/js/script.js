@@ -25,7 +25,6 @@ document.addEventListener('DOMContentLoaded', () => {
     let conversationToDeleteId = null;
     let currentPreviewCode = '';
     
-    // --- CORRECCIÓN AQUÍ ---
     // Se ha modificado el inicializador de markdown-it
     const md = window.markdownit({
         highlight: (str, lang) => {
