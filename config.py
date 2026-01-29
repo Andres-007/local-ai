@@ -11,12 +11,9 @@ class Config:
 	GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 	
 	# MongoDB
-	MONGODB_URI = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/')
+	MONGODB_URI = os.getenv('MONGODB_URI', 'mongodb://localhost:PORT/')
 	
-	# --- LÍNEA CORREGIDA ---
-	# Ahora busca la variable de entorno 'MONGODB_DB_NAME'
-	# Si no la encuentra, usa 'datagen' como valor por defecto.
-	MONGODB_DB_NAME = os.getenv('MONGODB_DB_NAME', 'datagen')
+	MONGODB_DB_NAME = os.getenv('MONGODB_DB_NAME', 'databasname')
 	
 	# Verificación de variables
 	if not GEMINI_API_KEY:
@@ -30,8 +27,8 @@ class Config:
 		print("\n" + "="*50)
 		print("⚠️ ALERTA: MONGODB_URI no encontrada")
 		print("Añade en tu archivo .env:")
-		print("MONGODB_URI=mongodb://localhost:27017/")
-		print("O usa MongoDB Atlas (gratis):")
+		print("MONGODB_URI=mongodb://localhost:PORT/")
+		print("O usa MongoDB Atlas:")
 		print("MONGODB_URI=mongodb+srv://usuario:password@cluster.mongodb.net/")
 		print("="*50 + "\n")
 	
