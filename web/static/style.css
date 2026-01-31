@@ -33,7 +33,16 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Ar
 .conversations-list { flex-grow: 1; overflow-y: auto; padding: 0.8rem; -webkit-overflow-scrolling: touch; }
 .conversation-item { padding: 1.2rem; margin-bottom: 0.4rem; border-radius: 0.8rem; cursor: pointer; display: flex; align-items: center; gap: 0.8rem; transition: background 0.2s; min-height: 4.4rem; }
 .conversation-item.active { background: var(--bg-secondary); }
-.conversation-title { flex-grow: 1; font-size: 1.4rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.conversation-title {
+    flex-grow: 1;
+    min-width: 0;
+    font-size: 1.4rem;
+    white-space: normal;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
 .delete-btn { opacity: 1; padding: 0.4rem; background: none; border: none; color: var(--text-secondary); cursor: pointer; transition: all 0.2s; min-width: 4.4rem; min-height: 4.4rem; display: flex; align-items: center; justify-content: center; }
 .delete-btn:hover { color: var(--danger); }
 
