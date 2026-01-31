@@ -131,6 +131,21 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Ar
 .input-container { max-width: 80rem; margin: 0 auto; display: flex; gap: 1.2rem; align-items: flex-end; }
 #chat-input { flex-grow: 1; padding: 1.2rem 1.6rem; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 0.8rem; color: var(--text-primary); font-size: 1.6rem; resize: none; font-family: inherit; line-height: 1.5; max-height: 20rem; overflow-y: auto; }
 #chat-input:focus { outline: none; border-color: var(--accent); }
+.file-input { display: none; }
+.file-upload-btn {
+    padding: 1.2rem;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 0.8rem;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+    height: 4.8rem;
+    width: 4.8rem;
+}
+.file-upload-btn:hover { background: var(--bg-primary); }
 #send-btn { padding: 1.2rem; background: var(--accent); border: none; border-radius: 0.8rem; color: white; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s; flex-shrink: 0; width: 4.8rem; height: 4.8rem; }
 #send-btn:hover:not(:disabled) { background: var(--accent-hover); }
 #send-btn:disabled { opacity: 0.5; cursor: not-allowed; }

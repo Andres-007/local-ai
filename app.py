@@ -29,6 +29,18 @@ def _parse_paging_args(default_limit=50, max_limit=200):
     offset = max(0, offset)
     return limit, offset
 
+def _extract_request_data():
+    if request.is_json:
+        data = request.get_json(silent=True) or {}
+        prompt = data.get('prompt')
+        conversation_id = data.get('conversation_id')
+        file = None
+    else:
+        prompt = request.form.get('prompt')
+        conversation_id = request.form.get('conversation_id')
+        file = request.files.get('file')
+    return (prompt or '').strip(), conversation_id, file
+
 # --- Decorador para rutas protegidas ---
 def login_required(f):
     @wraps(f)
@@ -173,12 +185,10 @@ def delete_conversation(conversation_id):
 @app.route('/api/generate', methods=['POST'])
 @login_required
 def api_generate():
-    data = request.get_json()
-    prompt = data.get('prompt')
-    conversation_id_str = data.get('conversation_id')
+    prompt, conversation_id_str, file = _extract_request_data()
     user_id = session['user_id']
     
-    if not prompt:
+    if not prompt and not file:
         return jsonify({"error": "Falta el parámetro 'prompt'"}), 400
 
     try:
@@ -188,7 +198,10 @@ def api_generate():
         
         conversation_id = ObjectId(conversation_id_str)
         db.save_message(conversation_id, 'user', prompt)
-        response_text = ai_model.generate(prompt)
+        if file:
+            response_text = ai_model.generate_with_file(prompt, file)
+        else:
+            response_text = ai_model.generate(prompt)
         db.save_message(conversation_id, 'bot', response_text)
         
         return jsonify({
@@ -202,11 +215,9 @@ def api_generate():
 @app.route('/api/generate-stream', methods=['POST'])
 @login_required
 def api_generate_stream():
-    data = request.get_json()
-    prompt = data.get('prompt')
-    conversation_id_str = data.get('conversation_id')
+    prompt, conversation_id_str, file = _extract_request_data()
     
-    if not prompt or not conversation_id_str:
+    if (not prompt and not file) or not conversation_id_str:
         return jsonify({"error": "Faltan 'prompt' o 'conversation_id'"}), 400
 
     def generate():
@@ -215,7 +226,8 @@ def api_generate_stream():
             conversation_id = ObjectId(conversation_id_str)
             db.save_message(conversation_id, 'user', prompt)
             
-            for chunk in ai_model.generate_stream(prompt):
+            stream = ai_model.generate_stream_with_file(prompt, file) if file else ai_model.generate_stream(prompt)
+            for chunk in stream:
                 full_response += chunk
                 yield chunk
             

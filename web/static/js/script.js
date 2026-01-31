@@ -12,6 +12,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const chatContainer = document.getElementById('chat-container');
     const chatForm = document.getElementById('chat-form');
     const chatInput = document.getElementById('chat-input');
+    const fileInput = document.getElementById('file-input');
     const sendBtn = document.getElementById('send-btn');
     const sidebarOverlay = document.getElementById('sidebar-overlay');
     const previewModal = document.getElementById('preview-modal');
@@ -207,31 +208,48 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    chatForm.addEventListener('submit', async (e) => {
+    chatForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const message = chatInput.value.trim();
-    if (!message) return;
+    const file = fileInput.files[0];
+    if (!message && !file) return;
     
     if (chatContainer.querySelector('.empty-state')) {
         chatContainer.innerHTML = '';
     }
 
-    appendMessage(message, 'user');
+    const displayMessage = message || `Archivo adjunto: ${file.name}`;
+    appendMessage(displayMessage, 'user');
     const typingIndicator = appendMessage('<div class="typing-indicator"><span></span><span></span><span></span></div>', 'bot', true);
     chatInput.value = '';
+    fileInput.value = '';
     autoResizeTextarea();
     sendBtn.disabled = true;
 
     try {
         const endpoint = currentConversationId ? '/api/generate-stream' : '/api/generate';
-        const res = await fetchApi(endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-                prompt: message, 
-                conversation_id: currentConversationId 
-            })
-        });
+        let res;
+        if (file) {
+            const formData = new FormData();
+            formData.append('prompt', message || `Archivo adjunto: ${file.name}`);
+            if (currentConversationId) {
+                formData.append('conversation_id', currentConversationId);
+            }
+            formData.append('file', file);
+            res = await fetchApi(endpoint, {
+                method: 'POST',
+                body: formData
+            });
+        } else {
+            res = await fetchApi(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    prompt: message, 
+                    conversation_id: currentConversationId 
+                })
+            });
+        }
 
         if (!res.ok) {
             throw new Error(`HTTP error! status: ${res.status}`);
@@ -477,6 +495,14 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     
     chatInput.addEventListener('input', autoResizeTextarea);
+    chatInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            if (!sendBtn.disabled) {
+                chatForm.requestSubmit();
+            }
+        }
+    });
 
     loadConversations();
 });

@@ -1,4 +1,6 @@
 import google.generativeai as genai
+import os
+import tempfile
 from config import Config
 
 # Configura la API de Gemini con la clave obtenida desde la configuración
@@ -53,7 +55,7 @@ class WebDevAI:
 
 		**Reglas de Interacción:**
 		- Si un prompt es ambiguo, pide clarificación.
-		- Si te piden código en un lenguaje o framework que no manejas (ej. Java/Spring, PHP/Laravel), explica educadamente tus capacidades actuales (Frontend, Python/Flask, Node.js/Express) y ofrece generar una solución con esas tecnologías.
+		- Puedes responder preguntas de programación de cualquier lenguaje o framework (por ejemplo Java/Spring, PHP/Laravel, Go, Rust, C#, etc.).
 		- Para preguntas teóricas, proporciona explicaciones claras y concisas.
 		"""
 		
@@ -84,6 +86,41 @@ class WebDevAI:
 		except Exception as e:
 			print(f"Error al contactar: {e}")
 			return "Error: No se pudo obtener una respuesta del modelo. Verifica la conexión a internet."
+
+	def _is_text_file(self, filename, mimetype):
+		if mimetype and mimetype.startswith('text/'):
+			return True
+		ext = os.path.splitext(filename.lower())[1]
+		text_exts = {
+			'.txt', '.md', '.py', '.js', '.ts', '.tsx', '.jsx', '.java', '.c', '.cpp', '.h',
+			'.hpp', '.cs', '.go', '.rs', '.php', '.rb', '.swift', '.kt', '.scala', '.sql',
+			'.html', '.css', '.json', '.yaml', '.yml', '.xml', '.sh', '.bat', '.ps1'
+		}
+		return ext in text_exts
+
+	def generate_with_file(self, prompt, file_storage):
+		try:
+			filename = file_storage.filename or "archivo"
+			mimetype = file_storage.mimetype or ""
+			if self._is_text_file(filename, mimetype):
+				content = file_storage.stream.read().decode('utf-8', errors='replace')
+				combined_prompt = (
+					f"{prompt}\n\nArchivo adjunto: {filename}\n```\n{content}\n```"
+				).strip()
+				self.convo.send_message(combined_prompt)
+				return self.convo.last.text
+
+			with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp:
+				file_storage.save(tmp.name)
+				uploaded = genai.upload_file(tmp.name)
+			try:
+				self.convo.send_message([uploaded, prompt or f"Analiza el archivo {filename}."])
+				return self.convo.last.text
+			finally:
+				os.unlink(tmp.name)
+		except Exception as e:
+			print(f"Error al contactar con archivo: {e}")
+			return "Error: No se pudo procesar el archivo. Verifica el formato e inténtalo de nuevo."
 	
 	def generate_stream(self, prompt):
 		"""
@@ -103,3 +140,32 @@ class WebDevAI:
 		except Exception as e:
 			print(f"Error al contactar (streaming): {e}")
 			yield "Error: No se pudo obtener una respuesta del modelo. Verifica la conexión a internet."
+
+	def generate_stream_with_file(self, prompt, file_storage):
+		try:
+			filename = file_storage.filename or "archivo"
+			mimetype = file_storage.mimetype or ""
+			if self._is_text_file(filename, mimetype):
+				content = file_storage.stream.read().decode('utf-8', errors='replace')
+				combined_prompt = (
+					f"{prompt}\n\nArchivo adjunto: {filename}\n```\n{content}\n```"
+				).strip()
+				response = self.convo.send_message(combined_prompt, stream=True)
+				for chunk in response:
+					if getattr(chunk, "text", None):
+						yield chunk.text
+				return
+
+			with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp:
+				file_storage.save(tmp.name)
+				uploaded = genai.upload_file(tmp.name)
+			try:
+				response = self.convo.send_message([uploaded, prompt or f"Analiza el archivo {filename}."], stream=True)
+				for chunk in response:
+					if getattr(chunk, "text", None):
+						yield chunk.text
+			finally:
+				os.unlink(tmp.name)
+		except Exception as e:
+			print(f"Error al contactar con archivo (streaming): {e}")
+			yield "Error: No se pudo procesar el archivo. Verifica el formato e inténtalo de nuevo."
