@@ -19,11 +19,22 @@ class ChatDatabase:
             
             # --- NUEVA COLECCIÓN ---
             self.projects = self.db['projects'] # Nueva colección para los proyectos del carrusel
+            self._ensure_indexes()
             
             print("Conexión exitosa a MongoDB")
         except Exception as e:
             print(f"Error al conectar con MongoDB: {e}")
             self.client = None
+
+    def _ensure_indexes(self):
+        """Crea índices para consultas frecuentes (idempotente)."""
+        try:
+            self.users.create_index('email')
+            self.conversations.create_index([('user_id', 1), ('updated_at', -1)])
+            self.messages.create_index([('conversation_id', 1), ('timestamp', 1)])
+            self.projects.create_index('created_at')
+        except Exception as e:
+            print(f"Error al crear índices: {e}")
 
     # --- Métodos de Usuario (sin cambios) ---
     def create_user(self, email, password_hash):
@@ -73,20 +84,30 @@ class ChatDatabase:
             {'$set': {'updated_at': datetime.utcnow()}}
         )
 
-    def get_conversation_history(self, conversation_id):
-        messages = list(self.messages.find(
+    def get_conversation_history(self, conversation_id, limit=None, skip=0, newest_first=False):
+        query = self.messages.find(
             {'conversation_id': ObjectId(conversation_id)}
-        ).sort('timestamp', 1))
+        ).sort('timestamp', -1 if newest_first else 1)
+        if skip:
+            query = query.skip(skip)
+        if limit is not None:
+            query = query.limit(limit)
+        messages = list(query)
         
         for msg in messages:
             msg['_id'] = str(msg['_id'])
             msg['conversation_id'] = str(msg['conversation_id'])
         return messages
 
-    def get_user_conversations(self, user_id):
-        conversations = list(self.conversations.find(
+    def get_user_conversations(self, user_id, limit=None, skip=0):
+        query = self.conversations.find(
             {'user_id': user_id}
-        ).sort('updated_at', -1))
+        ).sort('updated_at', -1)
+        if skip:
+            query = query.skip(skip)
+        if limit is not None:
+            query = query.limit(limit)
+        conversations = list(query)
         
         for conv in conversations:
             conv['_id'] = str(conv['_id'])
@@ -108,7 +129,7 @@ class ChatDatabase:
         except:
             return False
 
-    def get_conversation_with_messages(self, conversation_id):
+    def get_conversation_with_messages(self, conversation_id, limit=None, skip=0, newest_first=False):
         try:
             conv_obj_id = ObjectId(conversation_id)
             conversation = self.conversations.find_one({'_id': conv_obj_id})
@@ -116,7 +137,12 @@ class ChatDatabase:
                 return None
             
             conversation['_id'] = str(conversation['_id'])
-            conversation['messages'] = self.get_conversation_history(conversation_id)
+            conversation['messages'] = self.get_conversation_history(
+                conversation_id,
+                limit=limit,
+                skip=skip,
+                newest_first=newest_first
+            )
             return conversation
         except:
             return None
@@ -138,13 +164,18 @@ class ChatDatabase:
         result = self.projects.insert_one(project_data)
         return str(result.inserted_id)
 
-    def get_all_projects(self):
+    def get_all_projects(self, limit=None, skip=0):
         """
         Obtiene todos los proyectos de la base de datos, ordenados por fecha.
         """
         try:
             # Ordena por 'created_at' descendente para mostrar los más nuevos primero
-            projects = list(self.projects.find().sort('created_at', -1))
+            query = self.projects.find().sort('created_at', -1)
+            if skip:
+                query = query.skip(skip)
+            if limit is not None:
+                query = query.limit(limit)
+            projects = list(query)
             for proj in projects:
                 proj['_id'] = str(proj['_id']) # Convertir ObjectId a string para JSON
             return projects

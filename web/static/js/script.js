@@ -24,6 +24,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentConversationId = null;
     let conversationToDeleteId = null;
     let currentPreviewCode = '';
+    const conversationPaging = { limit: 30, offset: 0, hasMore: false, loading: false };
+    const messagePaging = { limit: 50, offset: 0, hasMore: false, loading: false };
     
     // Se ha modificado el inicializador de markdown-it
     const md = window.markdownit({
@@ -64,6 +66,20 @@ document.addEventListener('DOMContentLoaded', () => {
         if (window.innerWidth < 768) closeSidebar();
     });
 
+    conversationsList.addEventListener('click', (e) => {
+        const deleteBtn = e.target.closest('.delete-btn');
+        if (deleteBtn) {
+            e.stopPropagation();
+            conversationToDeleteId = deleteBtn.dataset.id;
+            deleteModal.classList.add('show');
+            return;
+        }
+        const item = e.target.closest('.conversation-item');
+        if (item) {
+            loadConversation(item.dataset.id);
+        }
+    });
+
     // Helper para fetch que maneja errores de autenticación
     async function fetchApi(url, options = {}) {
         const res = await fetch(url, options);
@@ -74,52 +90,107 @@ document.addEventListener('DOMContentLoaded', () => {
         return res;
     }
 
-    async function loadConversations() {
-        try {
-            const res = await fetchApi('/api/conversations');
-            if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-            const data = await res.json();
-            displayConversations(data.conversations || []);
-        } catch (err) {
-            if (err.message !== 'No autorizado') {
-                console.error('Error cargando conversaciones:', err);
-            }
-        }
-    }
+    async function loadConversations(reset = true) {
+        if (conversationPaging.loading) return;
+        conversationPaging.loading = true;
+        try {
+            if (reset) {
+                conversationPaging.offset = 0;
+                conversationsList.innerHTML = '';
+            }
+            const params = new URLSearchParams({
+                limit: conversationPaging.limit,
+                offset: conversationPaging.offset
+            });
+            const res = await fetchApi(`/api/conversations?${params.toString()}`);
+            if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+            const data = await res.json();
+            displayConversations(data.conversations || [], !reset);
+            conversationPaging.hasMore = Boolean(data.has_more);
+            updateConversationsLoadMore();
+        } catch (err) {
+            if (err.message !== 'No autorizado') {
+                console.error('Error cargando conversaciones:', err);
+            }
+        } finally {
+            conversationPaging.loading = false;
+        }
+    }
 
-    function displayConversations(conversations) {
-        conversationsList.innerHTML = conversations.map(conv => `
-            <div class="conversation-item" data-id="${conv._id}">
-                <span class="conversation-title">${conv.title}</span>
-                <button class="delete-btn" data-id="${conv._id}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
-            </div>`).join('');
-        
-        document.querySelectorAll('.conversation-item').forEach(item => {
-            item.addEventListener('click', (e) => !e.target.closest('.delete-btn') && loadConversation(item.dataset.id));
-        });
-        document.querySelectorAll('.delete-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                conversationToDeleteId = btn.dataset.id;
-                deleteModal.classList.add('show');
-            });
-        });
-    }
+    function displayConversations(conversations, append = false) {
+        const html = conversations.map(conv => `
+            <div class="conversation-item" data-id="${conv._id}">
+                <span class="conversation-title">${conv.title}</span>
+                <button class="delete-btn" data-id="${conv._id}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
+            </div>`).join('');
+        if (append) {
+            conversationsList.insertAdjacentHTML('beforeend', html);
+        } else {
+            conversationsList.innerHTML = html;
+        }
+    }
+
+    function updateConversationsLoadMore() {
+        const existing = conversationsList.querySelector('.load-more-conversations');
+        if (existing) existing.remove();
+        if (!conversationPaging.hasMore) return;
+        const btn = document.createElement('button');
+        btn.className = 'load-more-conversations';
+        btn.textContent = 'Cargar más';
+        btn.addEventListener('click', async () => {
+            if (conversationPaging.loading) return;
+            conversationPaging.offset += conversationPaging.limit;
+            await loadConversations(false);
+        });
+        conversationsList.appendChild(btn);
+    }
     
-    async function loadConversation(id) {
-        try {
-            const res = await fetchApi(`/api/conversations/${id}`);
-            if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-            const conv = await res.json();
-            currentConversationId = id;
-            chatContainer.innerHTML = '';
-            conv.messages.forEach(msg => appendMessage(msg.content, msg.role));
-            document.querySelectorAll('.conversation-item').forEach(el => el.classList.toggle('active', el.dataset.id === id));
-            if (window.innerWidth < 768) closeSidebar();
-        } catch (err) {
-            if (err.message !== 'No autorizado') console.error('Error cargando conversación:', err);
-        }
-    }
+    async function loadConversation(id, reset = true) {
+        if (messagePaging.loading) return;
+        messagePaging.loading = true;
+        try {
+            if (reset) {
+                currentConversationId = id;
+                messagePaging.offset = 0;
+                chatContainer.innerHTML = '';
+            }
+            const params = new URLSearchParams({
+                limit: messagePaging.limit,
+                offset: messagePaging.offset
+            });
+            const res = await fetchApi(`/api/conversations/${id}?${params.toString()}`);
+            if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+            const conv = await res.json();
+            if (reset) {
+                conv.messages.forEach(msg => appendMessage(msg.content, msg.role));
+            } else {
+                prependMessages(conv.messages || []);
+            }
+            messagePaging.hasMore = Boolean(conv.has_more_messages);
+            updateMessagesLoadMore();
+            document.querySelectorAll('.conversation-item').forEach(el => el.classList.toggle('active', el.dataset.id === id));
+            if (window.innerWidth < 768) closeSidebar();
+        } catch (err) {
+            if (err.message !== 'No autorizado') console.error('Error cargando conversación:', err);
+        } finally {
+            messagePaging.loading = false;
+        }
+    }
+
+    function updateMessagesLoadMore() {
+        const existing = chatContainer.querySelector('.load-more-messages');
+        if (existing) existing.remove();
+        if (!messagePaging.hasMore) return;
+        const btn = document.createElement('button');
+        btn.className = 'load-more-messages';
+        btn.textContent = 'Cargar mensajes anteriores';
+        btn.addEventListener('click', async () => {
+            if (messagePaging.loading || !currentConversationId) return;
+            messagePaging.offset += messagePaging.limit;
+            await loadConversation(currentConversationId, false);
+        });
+        chatContainer.insertAdjacentElement('afterbegin', btn);
+    }
     
     cancelDeleteBtn.addEventListener('click', () => deleteModal.classList.remove('show'));
     confirmDeleteBtn.addEventListener('click', async () => {
@@ -173,6 +244,26 @@ document.addEventListener('DOMContentLoaded', () => {
             let fullResponse = '';
             const content = typingIndicator.querySelector('.message-content');
             content.innerHTML = '';
+            let renderTimeout = null;
+
+            const scheduleRender = (final = false) => {
+                if (final) {
+                    if (renderTimeout) {
+                        clearTimeout(renderTimeout);
+                        renderTimeout = null;
+                    }
+                    content.innerHTML = md.render(fullResponse);
+                    addPreviewButton(content);
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                    return;
+                }
+                if (renderTimeout) return;
+                renderTimeout = setTimeout(() => {
+                    renderTimeout = null;
+                    content.innerHTML = md.render(fullResponse);
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                }, 120);
+            };
 
             try {
                 while (true) {
@@ -181,21 +272,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     
                     const chunk = decoder.decode(value, { stream: true });
                     fullResponse += chunk;
-                    
-                    // Safely update content and scroll
-                    requestAnimationFrame(() => {
-                        content.innerHTML = md.render(fullResponse);
-                        addPreviewButton(content);
-                        chatContainer.scrollTop = chatContainer.scrollHeight;
-                    });
+                    scheduleRender();
                 }
                 // Final decode to handle any remaining bytes
                 const remaining = decoder.decode();
                 if (remaining) {
                     fullResponse += remaining;
-                    content.innerHTML = md.render(fullResponse);
-                    addPreviewButton(content);
                 }
+                scheduleRender(true);
             } catch (streamError) {
                 console.error('Stream reading error:', streamError);
                 throw new Error('Error reading stream response');
@@ -222,17 +306,33 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 
-    function appendMessage(text, role, isTyping = false) {
+    function buildMessageElement(text, role, isTyping = false) {
         const msgGroup = document.createElement('div');
         msgGroup.className = `message-group ${role}-message`;
         msgGroup.innerHTML = `
             <div class="message-header">${role === 'user' ? 'Tú' : 'Web Dev AI'}</div>
             <div class="message-content">${isTyping ? text : (role === 'bot' ? md.render(text) : text.replace(/</g, "&lt;").replace(/>/g, "&gt;"))}</div>
         `;
+        return msgGroup;
+    }
+
+    function appendMessage(text, role, isTyping = false) {
+        const msgGroup = buildMessageElement(text, role, isTyping);
         chatContainer.appendChild(msgGroup);
         chatContainer.scrollTop = chatContainer.scrollHeight;
         if (role === 'bot' && !isTyping) addPreviewButton(msgGroup.querySelector('.message-content'));
         return msgGroup;
+    }
+
+    function prependMessages(messages) {
+        if (!messages.length) return;
+        const frag = document.createDocumentFragment();
+        messages.forEach(msg => {
+            frag.appendChild(buildMessageElement(msg.content, msg.role));
+        });
+        const loadMoreBtn = chatContainer.querySelector('.load-more-messages');
+        const insertBefore = loadMoreBtn ? loadMoreBtn.nextSibling : chatContainer.firstChild;
+        chatContainer.insertBefore(frag, insertBefore);
     }
 
     function updateLastBotMessage(text, element) {

@@ -101,10 +101,21 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // --- Lógica de carga de Proyectos y Swiper ---
     let swiperInstance; 
+    const projectsPaging = { limit: 12, offset: 0, hasMore: false, loading: false };
 
-    async function fetchProjectsFromDB() {
+    async function fetchProjectsFromDB(reset = true) {
+        if (projectsPaging.loading) return;
+        projectsPaging.loading = true;
         try {
-            const res = await fetch('/api/projects'); 
+            if (reset) {
+                projectsPaging.offset = 0;
+                swiperWrapper.innerHTML = '';
+            }
+            const params = new URLSearchParams({
+                limit: projectsPaging.limit,
+                offset: projectsPaging.offset
+            });
+            const res = await fetch(`/api/projects?${params.toString()}`); 
             
             if (!res.ok) {
                 throw new Error(`Error del servidor: ${res.status}`);
@@ -118,16 +129,23 @@ document.addEventListener('DOMContentLoaded', function() {
                  return;
             }
 
-            renderProjects(projects);
+            renderProjects(projects, !reset);
+            projectsPaging.hasMore = Boolean(data.has_more);
+            updateProjectsLoadMoreSlide();
 
         } catch (error) {
             console.error('Error al cargar los proyectos:', error);
             swiperWrapper.innerHTML = `<div class="projects-loading">No se pudieron cargar los proyectos.</div>`;
+        } finally {
+            projectsPaging.loading = false;
         }
     }
 
-    function renderProjects(projects) {
-        swiperWrapper.innerHTML = ''; 
+    function renderProjects(projects, append = false) {
+        if (!append) {
+            swiperWrapper.innerHTML = '';
+        }
+        const frag = document.createDocumentFragment();
         projects.forEach(project => {
             const slide = document.createElement('div');
             slide.classList.add('swiper-slide');
@@ -208,14 +226,15 @@ document.addEventListener('DOMContentLoaded', function() {
             });
 
 
-            swiperWrapper.appendChild(slide);
+            frag.appendChild(slide);
         });
+        swiperWrapper.appendChild(frag);
 
         if (swiperInstance) {
             swiperInstance.destroy(true, true); 
         }
         swiperInstance = new Swiper('.mySwiper', {
-            loop: projects.length > 2, 
+            loop: swiperWrapper.querySelectorAll('.swiper-slide').length > 2, 
             grabCursor: true,
             slidesPerView: 1, 
             spaceBetween: 30,
@@ -241,6 +260,31 @@ document.addEventListener('DOMContentLoaded', function() {
                 prevEl: '.swiper-button-prev',
             },
         });
+    }
+
+    function updateProjectsLoadMoreSlide() {
+        const existing = swiperWrapper.querySelector('.load-more-slide');
+        if (existing) existing.remove();
+        if (!projectsPaging.hasMore) return;
+        const slide = document.createElement('div');
+        slide.classList.add('swiper-slide', 'load-more-slide');
+        slide.innerHTML = `
+            <div class="project-card">
+                <div class="project-card-content" style="text-align:center;">
+                    <h3>Cargar más</h3>
+                    <button class="btn btn-secondary load-more-projects-btn">Ver más proyectos</button>
+                </div>
+            </div>
+        `;
+        slide.querySelector('.load-more-projects-btn').addEventListener('click', async () => {
+            if (projectsPaging.loading) return;
+            projectsPaging.offset += projectsPaging.limit;
+            await fetchProjectsFromDB(false);
+        });
+        swiperWrapper.appendChild(slide);
+        if (swiperInstance) {
+            swiperInstance.update();
+        }
     }
     
     fetchProjectsFromDB();

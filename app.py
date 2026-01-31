@@ -18,6 +18,17 @@ CORS(app)
 ai_model = WebDevAI()
 db = ChatDatabase()
 
+def _parse_paging_args(default_limit=50, max_limit=200):
+    try:
+        limit = request.args.get('limit', default_limit, type=int)
+        offset = request.args.get('offset', 0, type=int)
+    except ValueError:
+        limit = default_limit
+        offset = 0
+    limit = max(1, min(limit, max_limit))
+    offset = max(0, offset)
+    return limit, offset
+
 # --- Decorador para rutas protegidas ---
 def login_required(f):
     @wraps(f)
@@ -108,9 +119,12 @@ def get_projects():
     ya que se muestra en la página de login (index).
     """
     try:
-        projects = db.get_all_projects()
+        limit, offset = _parse_paging_args(default_limit=12, max_limit=100)
+        projects = db.get_all_projects(limit=limit + 1, skip=offset)
+        has_more = len(projects) > limit
+        projects = projects[:limit]
         # Devuelve los proyectos en un objeto JSON
-        return jsonify({"projects": projects})
+        return jsonify({"projects": projects, "has_more": has_more, "limit": limit, "offset": offset})
     except Exception as e:
         print(f"Error en /api/projects: {e}")
         return jsonify({"error": "Error interno al obtener proyectos"}), 500
@@ -121,15 +135,31 @@ def get_projects():
 @login_required
 def get_conversations():
     user_id = session['user_id']
-    conversations = db.get_user_conversations(user_id)
-    return jsonify({"conversations": conversations})
+    limit, offset = _parse_paging_args(default_limit=30, max_limit=200)
+    conversations = db.get_user_conversations(user_id, limit=limit + 1, skip=offset)
+    has_more = len(conversations) > limit
+    conversations = conversations[:limit]
+    return jsonify({"conversations": conversations, "has_more": has_more, "limit": limit, "offset": offset})
 
 @app.route('/api/conversations/<conversation_id>', methods=['GET'])
 @login_required
 def get_conversation(conversation_id):
-    conversation = db.get_conversation_with_messages(conversation_id)
+    limit, offset = _parse_paging_args(default_limit=50, max_limit=200)
+    conversation = db.get_conversation_with_messages(
+        conversation_id,
+        limit=limit + 1,
+        skip=offset,
+        newest_first=True
+    )
     if not conversation or conversation['user_id'] != session['user_id']:
         return jsonify({"error": "Conversación no encontrada o no autorizada"}), 404
+    has_more = len(conversation.get('messages', [])) > limit
+    if has_more:
+        conversation['messages'] = conversation['messages'][:limit]
+    conversation['messages'].reverse()
+    conversation['has_more_messages'] = has_more
+    conversation['limit'] = limit
+    conversation['offset'] = offset
     return jsonify(conversation)
 
 @app.route('/api/conversations/<conversation_id>', methods=['DELETE'])

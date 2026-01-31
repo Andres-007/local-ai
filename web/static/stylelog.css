@@ -327,6 +327,13 @@ body { font-family: var(--font-principal); background-color: var(--color-fondo);
 /* --- FOOTER --- */
 .main-footer { text-align: center; padding: 2rem 0; margin-top: 60px; border-top: 1px solid var(--color-superficie); color: var(--color-texto-secundario); }
 
+/* --- Carga incremental de proyectos --- */
+.load-more-slide .project-card-content {
+    justify-content: center;
+    align-items: center;
+    gap: 1rem;
+}
+
 
 
 
