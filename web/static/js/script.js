@@ -163,7 +163,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
             const conv = await res.json();
             if (reset) {
-                conv.messages.forEach(msg => appendMessage(msg.content, msg.role));
+                (conv.messages || []).forEach(msg => appendMessage(msg.content, msg.role));
             } else {
                 prependMessages(conv.messages || []);
             }
@@ -218,7 +218,7 @@ document.addEventListener('DOMContentLoaded', () => {
         chatContainer.innerHTML = '';
     }
 
-    const displayMessage = message || `Archivo adjunto: ${file.name}`;
+    const displayMessage = message || (file ? `Archivo adjunto: ${file.name}` : '');
     appendMessage(displayMessage, 'user');
     const typingIndicator = appendMessage('<div class="typing-indicator"><span></span><span></span><span></span></div>', 'bot', true);
     chatInput.value = '';
@@ -257,10 +257,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (res.headers.get("content-type")?.includes("text/plain")) {
             // Streaming response handling
+            if (!res.body) {
+                throw new Error('Response body is null');
+            }
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
             let fullResponse = '';
-            const content = typingIndicator.querySelector('.message-content');
+            const content = typingIndicator?.querySelector('.message-content');
+            if (!content) {
+                throw new Error('Message content not found');
+            }
             content.innerHTML = '';
             let renderTimeout = null;
 
@@ -346,7 +352,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!messages.length) return;
         const frag = document.createDocumentFragment();
         messages.forEach(msg => {
-            frag.appendChild(buildMessageElement(msg.content, msg.role));
+            frag.appendChild(buildMessageElement(msg.content || '', msg.role || 'user'));
         });
         const loadMoreBtn = chatContainer.querySelector('.load-more-messages');
         const insertBefore = loadMoreBtn ? loadMoreBtn.nextSibling : chatContainer.firstChild;

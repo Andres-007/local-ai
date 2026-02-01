@@ -1,6 +1,12 @@
 import google.generativeai as genai
 import os
+import sys
 import tempfile
+
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if ROOT_DIR not in sys.path:
+	sys.path.insert(0, ROOT_DIR)
+
 from config import Config
 
 # Configura la API de Gemini con la clave obtenida desde la configuración
@@ -82,10 +88,16 @@ class WebDevAI:
 		"""
 		try:
 			self.convo.send_message(prompt)
-			return self.convo.last.text
+			return self._safe_last_text()
 		except Exception as e:
 			print(f"Error al contactar: {e}")
 			return "Error: No se pudo obtener una respuesta del modelo. Verifica la conexión a internet."
+
+	def _safe_last_text(self):
+		last = getattr(self.convo, "last", None)
+		if last and getattr(last, "text", None):
+			return last.text
+		return "Error: No se recibió respuesta del modelo."
 
 	def _is_text_file(self, filename, mimetype):
 		if mimetype and mimetype.startswith('text/'):
@@ -103,21 +115,29 @@ class WebDevAI:
 			filename = file_storage.filename or "archivo"
 			mimetype = file_storage.mimetype or ""
 			if self._is_text_file(filename, mimetype):
+				if not getattr(file_storage, "stream", None):
+					return "Error: No se pudo leer el archivo adjunto."
 				content = file_storage.stream.read().decode('utf-8', errors='replace')
 				combined_prompt = (
 					f"{prompt}\n\nArchivo adjunto: {filename}\n```\n{content}\n```"
 				).strip()
 				self.convo.send_message(combined_prompt)
-				return self.convo.last.text
+				return self._safe_last_text()
 
 			with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp:
-				file_storage.save(tmp.name)
+				try:
+					file_storage.save(tmp.name)
+				except OSError:
+					return "Error: No se pudo guardar el archivo adjunto."
 				uploaded = genai.upload_file(tmp.name)
 			try:
 				self.convo.send_message([uploaded, prompt or f"Analiza el archivo {filename}."])
-				return self.convo.last.text
+				return self._safe_last_text()
 			finally:
-				os.unlink(tmp.name)
+				try:
+					os.unlink(tmp.name)
+				except FileNotFoundError:
+					pass
 		except Exception as e:
 			print(f"Error al contactar con archivo: {e}")
 			return "Error: No se pudo procesar el archivo. Verifica el formato e inténtalo de nuevo."
@@ -146,6 +166,9 @@ class WebDevAI:
 			filename = file_storage.filename or "archivo"
 			mimetype = file_storage.mimetype or ""
 			if self._is_text_file(filename, mimetype):
+				if not getattr(file_storage, "stream", None):
+					yield "Error: No se pudo leer el archivo adjunto."
+					return
 				content = file_storage.stream.read().decode('utf-8', errors='replace')
 				combined_prompt = (
 					f"{prompt}\n\nArchivo adjunto: {filename}\n```\n{content}\n```"
@@ -157,7 +180,11 @@ class WebDevAI:
 				return
 
 			with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp:
-				file_storage.save(tmp.name)
+				try:
+					file_storage.save(tmp.name)
+				except OSError:
+					yield "Error: No se pudo guardar el archivo adjunto."
+					return
 				uploaded = genai.upload_file(tmp.name)
 			try:
 				response = self.convo.send_message([uploaded, prompt or f"Analiza el archivo {filename}."], stream=True)
@@ -165,7 +192,10 @@ class WebDevAI:
 					if getattr(chunk, "text", None):
 						yield chunk.text
 			finally:
-				os.unlink(tmp.name)
+				try:
+					os.unlink(tmp.name)
+				except FileNotFoundError:
+					pass
 		except Exception as e:
 			print(f"Error al contactar con archivo (streaming): {e}")
 			yield "Error: No se pudo procesar el archivo. Verifica el formato e inténtalo de nuevo."

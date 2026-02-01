@@ -1,7 +1,14 @@
 from pymongo import MongoClient
 from datetime import datetime
-from config import Config  # Asumo que tienes tu URI de Mongo en config.py
+import os
+import sys
 from bson.objectid import ObjectId
+
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
+
+from config import Config  # Asumo que tienes tu URI de Mongo en config.py
 
 class ChatDatabase:
     """
@@ -36,11 +43,19 @@ class ChatDatabase:
         except Exception as e:
             print(f"Error al crear índices: {e}")
 
+    def _ensure_connection(self):
+        if not self.client:
+            print("Error: MongoDB no conectado.")
+            return False
+        return True
+
     # --- Métodos de Usuario (sin cambios) ---
     def create_user(self, email, password_hash):
         """
         Crea un nuevo usuario en la base de datos.
         """
+        if not self._ensure_connection():
+            return None
         user_data = {
             'email': email.lower(),
             'password': password_hash,
@@ -51,10 +66,14 @@ class ChatDatabase:
 
     def get_user_by_email(self, email):
         """Busca un usuario por su email."""
+        if not self._ensure_connection():
+            return None
         return self.users.find_one({'email': email.lower()})
 
     def get_user_by_id(self, user_id):
         """Busca un usuario por su ID."""
+        if not self._ensure_connection():
+            return None
         try:
             return self.users.find_one({'_id': ObjectId(user_id)})
         except:
@@ -62,6 +81,8 @@ class ChatDatabase:
 
     # --- Métodos de Conversación (sin cambios) ---
     def create_conversation(self, user_id, title="Nueva Conversación"):
+        if not self._ensure_connection():
+            return None
         conversation = {
             'user_id': user_id,
             'title': title,
@@ -72,6 +93,8 @@ class ChatDatabase:
         return str(result.inserted_id)
 
     def save_message(self, conversation_id, role, content):
+        if not self._ensure_connection():
+            return False
         message = {
             'conversation_id': conversation_id, # Se espera un ObjectId
             'role': role,
@@ -83,10 +106,17 @@ class ChatDatabase:
             {'_id': conversation_id},
             {'$set': {'updated_at': datetime.utcnow()}}
         )
+        return True
 
     def get_conversation_history(self, conversation_id, limit=None, skip=0, newest_first=False):
+        if not self._ensure_connection():
+            return []
+        try:
+            conv_id = ObjectId(conversation_id)
+        except:
+            return []
         query = self.messages.find(
-            {'conversation_id': ObjectId(conversation_id)}
+            {'conversation_id': conv_id}
         ).sort('timestamp', -1 if newest_first else 1)
         if skip:
             query = query.skip(skip)
@@ -100,6 +130,8 @@ class ChatDatabase:
         return messages
 
     def get_user_conversations(self, user_id, limit=None, skip=0):
+        if not self._ensure_connection():
+            return []
         query = self.conversations.find(
             {'user_id': user_id}
         ).sort('updated_at', -1)
@@ -114,6 +146,8 @@ class ChatDatabase:
         return conversations
 
     def delete_conversation(self, conversation_id, user_id):
+        if not self._ensure_connection():
+            return False
         try:
             conv_obj_id = ObjectId(conversation_id)
             conversation = self.conversations.find_one({
@@ -130,6 +164,8 @@ class ChatDatabase:
             return False
 
     def get_conversation_with_messages(self, conversation_id, limit=None, skip=0, newest_first=False):
+        if not self._ensure_connection():
+            return None
         try:
             conv_obj_id = ObjectId(conversation_id)
             conversation = self.conversations.find_one({'_id': conv_obj_id})
@@ -153,6 +189,8 @@ class ChatDatabase:
         """
         Crea un nuevo proyecto en la base de datos.
         """
+        if not self._ensure_connection():
+            return None
         project_data = {
             'title': title,
             'description': description,
@@ -168,6 +206,8 @@ class ChatDatabase:
         """
         Obtiene todos los proyectos de la base de datos, ordenados por fecha.
         """
+        if not self._ensure_connection():
+            return []
         try:
             # Ordena por 'created_at' descendente para mostrar los más nuevos primero
             query = self.projects.find().sort('created_at', -1)

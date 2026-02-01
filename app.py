@@ -7,6 +7,7 @@ from functools import wraps
 import secrets
 import os
 from bson.objectid import ObjectId
+from bson.errors import InvalidId
 
 app = Flask(__name__, template_folder='web/templates', static_folder='web/static')
 app.secret_key = os.getenv('SECRET_KEY', secrets.token_hex(16))
@@ -163,9 +164,10 @@ def get_conversation(conversation_id):
         skip=offset,
         newest_first=True
     )
-    if not conversation or conversation['user_id'] != session['user_id']:
+    if not conversation or conversation.get('user_id') != session['user_id']:
         return jsonify({"error": "Conversación no encontrada o no autorizada"}), 404
-    has_more = len(conversation.get('messages', [])) > limit
+    conversation['messages'] = conversation.get('messages') or []
+    has_more = len(conversation['messages']) > limit
     if has_more:
         conversation['messages'] = conversation['messages'][:limit]
     conversation['messages'].reverse()
@@ -193,11 +195,18 @@ def api_generate():
 
     try:
         if not conversation_id_str:
-            title = prompt[:50] + "..." if len(prompt) > 50 else prompt
+            title_source = prompt or (file.filename if file else "Nueva Conversación")
+            title = title_source[:50] + "..." if len(title_source) > 50 else title_source
             conversation_id_str = db.create_conversation(user_id, title)
-        
-        conversation_id = ObjectId(conversation_id_str)
-        db.save_message(conversation_id, 'user', prompt)
+
+        try:
+            conversation_id = ObjectId(conversation_id_str)
+        except InvalidId:
+            return jsonify({"error": "conversation_id inválido"}), 400
+
+        user_message = prompt or (f"Archivo adjunto: {file.filename}" if file else "")
+        if user_message:
+            db.save_message(conversation_id, 'user', user_message)
         if file:
             response_text = ai_model.generate_with_file(prompt, file)
         else:
@@ -223,8 +232,15 @@ def api_generate_stream():
     def generate():
         full_response = ""
         try:
-            conversation_id = ObjectId(conversation_id_str)
-            db.save_message(conversation_id, 'user', prompt)
+            try:
+                conversation_id = ObjectId(conversation_id_str)
+            except InvalidId:
+                yield "Error: conversation_id inválido"
+                return
+
+            user_message = prompt or (f"Archivo adjunto: {file.filename}" if file else "")
+            if user_message:
+                db.save_message(conversation_id, 'user', user_message)
             
             stream = ai_model.generate_stream_with_file(prompt, file) if file else ai_model.generate_stream(prompt)
             for chunk in stream:
