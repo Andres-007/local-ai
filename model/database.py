@@ -18,7 +18,14 @@ class ChatDatabase:
     def __init__(self):
         """Inicializa la conexión a MongoDB y las colecciones"""
         try:
-            self.client = MongoClient(Config.MONGODB_URI)
+            uri = (Config.MONGODB_URI or "").strip()
+            if not uri or not (uri.startswith('mongodb://') or uri.startswith('mongodb+srv://')):
+                raise ValueError(f"URI inválida: debe comenzar con 'mongodb://' o 'mongodb+srv://'")
+            self.client = MongoClient(
+                uri,
+                serverSelectionTimeoutMS=15000,
+                connectTimeoutMS=10000
+            )
             self.db = self.client[Config.MONGODB_DB_NAME]
             self.conversations = self.db['conversations']
             self.messages = self.db['messages']
@@ -76,7 +83,7 @@ class ChatDatabase:
             return None
         try:
             return self.users.find_one({'_id': ObjectId(user_id)})
-        except:
+        except Exception:
             return None
 
     # --- Métodos de Conversación (sin cambios) ---
@@ -113,7 +120,7 @@ class ChatDatabase:
             return []
         try:
             conv_id = ObjectId(conversation_id)
-        except:
+        except Exception:
             return []
         query = self.messages.find(
             {'conversation_id': conv_id}
@@ -160,7 +167,7 @@ class ChatDatabase:
             self.messages.delete_many({'conversation_id': conv_obj_id})
             result = self.conversations.delete_one({'_id': conv_obj_id})
             return result.deleted_count > 0
-        except:
+        except Exception:
             return False
 
     def get_conversation_with_messages(self, conversation_id, limit=None, skip=0, newest_first=False):
@@ -180,7 +187,7 @@ class ChatDatabase:
                 newest_first=newest_first
             )
             return conversation
-        except:
+        except Exception:
             return None
 
     # --- NUEVOS MÉTODOS PARA PROYECTOS ---

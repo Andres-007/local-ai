@@ -75,12 +75,15 @@ def chat():
 
 @app.route('/login', methods=['POST'])
 def login():
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     email = data.get('email')
     password = data.get('password')
 
     if not email or not password:
         return jsonify({"error": "Email y contraseña son requeridos"}), 400
+
+    if not db._ensure_connection():
+        return jsonify({"error": "Servicio no disponible. Intenta más tarde."}), 503
 
     user = db.get_user_by_email(email)
 
@@ -93,19 +96,24 @@ def login():
 
 @app.route('/register', methods=['POST'])
 def register():
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     email = data.get('email')
     password = data.get('password')
 
     if not email or not password:
         return jsonify({"error": "Email y contraseña son requeridos"}), 400
 
+    if not db._ensure_connection():
+        return jsonify({"error": "Servicio no disponible. Intenta más tarde."}), 503
+
     if db.get_user_by_email(email):
         return jsonify({"error": "El email ya está registrado"}), 409
 
     hashed_password = generate_password_hash(password)
     user_id = db.create_user(email, hashed_password)
-    
+    if not user_id:
+        return jsonify({"error": "No se pudo crear la cuenta. Verifica la conexión a la base de datos."}), 503
+
     session['user_id'] = user_id
     session['user_email'] = email
 
@@ -198,6 +206,8 @@ def api_generate():
             title_source = prompt or (file.filename if file else "Nueva Conversación")
             title = title_source[:50] + "..." if len(title_source) > 50 else title_source
             conversation_id_str = db.create_conversation(user_id, title)
+            if not conversation_id_str:
+                return jsonify({"error": "No se pudo crear la conversación. Verifica la conexión a la base de datos."}), 503
 
         try:
             conversation_id = ObjectId(conversation_id_str)
