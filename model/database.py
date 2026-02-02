@@ -2,6 +2,9 @@ from pymongo import MongoClient
 from datetime import datetime
 import os
 import sys
+import subprocess
+import re
+import urllib.parse
 from bson.objectid import ObjectId
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -9,6 +12,50 @@ if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
 from config import Config  # Asumo que tienes tu URI de Mongo en config.py
+
+
+def _resolve_mongodb_srv_via_nslookup(uri):
+    """
+    Fallback: resuelve mongodb+srv usando nslookup (subprocess) cuando
+    la resolución DNS de Python falla. Construye URI estándar mongodb://
+    con hostnames. Requiere ejecutar fix_mongodb_dns.ps1 como admin para
+    añadir hostnames al archivo hosts.
+    """
+    try:
+        parsed = urllib.parse.urlparse(uri)
+        if parsed.scheme != "mongodb+srv":
+            return None
+        netloc = parsed.netloc
+        if "@" in netloc:
+            auth, host = netloc.rsplit("@", 1)
+        else:
+            auth, host = "", netloc
+        host_clean = host.split("/")[0].split("?")[0]
+        srv_host = f"_mongodb._tcp.{host_clean}"
+        result = subprocess.run(
+            ["nslookup", "-type=SRV", srv_host, "8.8.8.8"],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode != 0:
+            return None
+        shards = re.findall(r"svr hostname\s*=\s*(\S+\.mongodb\.net)", result.stdout)
+        if not shards:
+            return None
+        db_name = Config.MONGODB_DB_NAME or "admin"
+        hosts_str = ",".join(f"{s}:27017" for s in shards[:3])
+        direct_uri = f"mongodb://{auth}@{shards[0]}:27017/admin?ssl=true&directConnection=true&authSource=admin"
+        try:
+            tmp_client = MongoClient(direct_uri, serverSelectionTimeoutMS=10000, connectTimeoutMS=10000)
+            rs_status = tmp_client.admin.command("replSetGetStatus")
+            tmp_client.close()
+            replica_set = rs_status.get("set")
+        except Exception:
+            replica_set = "atlas-cdvd67-shard-0"
+        opts = f"ssl=true&replicaSet={replica_set}&authSource=admin&retryWrites=true&w=majority"
+        return f"mongodb://{auth}@{hosts_str}/{db_name}?{opts}"
+    except Exception:
+        return None
+
 
 class ChatDatabase:
     """
@@ -21,21 +68,33 @@ class ChatDatabase:
             uri = (Config.MONGODB_URI or "").strip()
             if not uri or not (uri.startswith('mongodb://') or uri.startswith('mongodb+srv://')):
                 raise ValueError(f"URI inválida: debe comenzar con 'mongodb://' o 'mongodb+srv://'")
-            self.client = MongoClient(
-                uri,
-                serverSelectionTimeoutMS=15000,
-                connectTimeoutMS=10000
-            )
-            self.db = self.client[Config.MONGODB_DB_NAME]
-            self.conversations = self.db['conversations']
-            self.messages = self.db['messages']
-            self.users = self.db['users']
-            
-            # --- NUEVA COLECCIÓN ---
-            self.projects = self.db['projects'] # Nueva colección para los proyectos del carrusel
-            self._ensure_indexes()
-            
-            print("Conexión exitosa a MongoDB")
+            last_error = None
+            for attempt_uri in [uri, _resolve_mongodb_srv_via_nslookup(uri)]:
+                if not attempt_uri:
+                    continue
+                try:
+                    self.client = MongoClient(
+                        attempt_uri,
+                        serverSelectionTimeoutMS=20000,
+                        connectTimeoutMS=15000
+                    )
+                    self.db = self.client[Config.MONGODB_DB_NAME]
+                    self.conversations = self.db['conversations']
+                    self.messages = self.db['messages']
+                    self.users = self.db['users']
+                    self.projects = self.db['projects']
+                    self._ensure_indexes()
+                    if attempt_uri != uri:
+                        print("Conexión exitosa a MongoDB (via resolución nslookup)")
+                    else:
+                        print("Conexión exitosa a MongoDB")
+                    return
+                except Exception as e:
+                    last_error = e
+                    if "resolution lifetime" in str(e).lower() or "dns" in str(e).lower():
+                        continue
+                    break
+            raise last_error
         except Exception as e:
             print(f"Error al conectar con MongoDB: {e}")
             self.client = None

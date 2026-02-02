@@ -99,31 +99,60 @@ class WebDevAI:
 			return last.text
 		return "Error: No se recibió respuesta del modelo."
 
+	# Extensiones de archivos de código/texto soportados
+	TEXT_EXTENSIONS = frozenset({
+		'.txt', '.md', '.py', '.js', '.ts', '.tsx', '.jsx', '.mjs', '.cjs', '.java', '.c', '.cpp', '.cc', '.cxx', '.h', '.hpp', '.hxx',
+		'.cs', '.vb', '.fs', '.fsx', '.go', '.rs', '.php', '.rb', '.swift', '.kt', '.kts', '.scala', '.sql', '.html', '.htm', '.css', '.scss', '.sass', '.less',
+		'.json', '.yaml', '.yml', '.xml', '.toml', '.ini', '.cfg', '.conf', '.env', '.sh', '.bash', '.bat', '.ps1', '.psm1',
+		'.vue', '.svelte', '.dart', '.r', '.lua', '.ex', '.exs', '.cr', '.nim', '.zig', '.v', '.sv', '.proto',
+		'.graphql', '.gql', '.prisma', '.dockerfile', '.gitignore', '.env.example'
+	})
+
 	def _is_text_file(self, filename, mimetype):
-		if mimetype and mimetype.startswith('text/'):
+		if mimetype and (mimetype.startswith('text/') or mimetype in ('application/json', 'application/xml', 'application/javascript')):
 			return True
 		ext = os.path.splitext(filename.lower())[1]
-		text_exts = {
-			'.txt', '.md', '.py', '.js', '.ts', '.tsx', '.jsx', '.java', '.c', '.cpp', '.h',
-			'.hpp', '.cs', '.go', '.rs', '.php', '.rb', '.swift', '.kt', '.scala', '.sql',
-			'.html', '.css', '.json', '.yaml', '.yml', '.xml', '.sh', '.bat', '.ps1'
-		}
-		return ext in text_exts
+		return ext in self.TEXT_EXTENSIONS
+
+	def _read_file_content(self, file_storage):
+		"""Lee el contenido de un archivo como texto UTF-8, manejando streams correctamente."""
+		try:
+			if hasattr(file_storage, 'seek'):
+				file_storage.seek(0)
+			raw = file_storage.read() if hasattr(file_storage, 'read') else file_storage.stream.read()
+			if isinstance(raw, str):
+				return raw
+			return raw.decode('utf-8', errors='replace')
+		except Exception as e:
+			print(f"Error leyendo archivo: {e}")
+			raise
 
 	def generate_with_file(self, prompt, file_storage):
 		try:
 			filename = file_storage.filename or "archivo"
 			mimetype = file_storage.mimetype or ""
-			if self._is_text_file(filename, mimetype):
-				if not getattr(file_storage, "stream", None):
-					return "Error: No se pudo leer el archivo adjunto."
-				content = file_storage.stream.read().decode('utf-8', errors='replace')
+			use_text_path = self._is_text_file(filename, mimetype)
+			if use_text_path:
+				content = self._read_file_content(file_storage)
 				combined_prompt = (
 					f"{prompt}\n\nArchivo adjunto: {filename}\n```\n{content}\n```"
 				).strip()
 				self.convo.send_message(combined_prompt)
 				return self._safe_last_text()
 
+			try:
+				content = self._read_file_content(file_storage)
+				if content and len(content.strip()) > 0:
+					combined_prompt = (
+						f"{prompt}\n\nArchivo adjunto: {filename}\n```\n{content}\n```"
+					).strip()
+					self.convo.send_message(combined_prompt)
+					return self._safe_last_text()
+			except Exception:
+				pass
+
+			if hasattr(file_storage, 'seek'):
+				file_storage.seek(0)
 			with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp:
 				try:
 					file_storage.save(tmp.name)
@@ -165,11 +194,9 @@ class WebDevAI:
 		try:
 			filename = file_storage.filename or "archivo"
 			mimetype = file_storage.mimetype or ""
-			if self._is_text_file(filename, mimetype):
-				if not getattr(file_storage, "stream", None):
-					yield "Error: No se pudo leer el archivo adjunto."
-					return
-				content = file_storage.stream.read().decode('utf-8', errors='replace')
+			use_text_path = self._is_text_file(filename, mimetype)
+			if use_text_path:
+				content = self._read_file_content(file_storage)
 				combined_prompt = (
 					f"{prompt}\n\nArchivo adjunto: {filename}\n```\n{content}\n```"
 				).strip()
@@ -179,6 +206,22 @@ class WebDevAI:
 						yield chunk.text
 				return
 
+			try:
+				content = self._read_file_content(file_storage)
+				if content and len(content.strip()) > 0:
+					combined_prompt = (
+						f"{prompt}\n\nArchivo adjunto: {filename}\n```\n{content}\n```"
+					).strip()
+					response = self.convo.send_message(combined_prompt, stream=True)
+					for chunk in response:
+						if getattr(chunk, "text", None):
+							yield chunk.text
+					return
+			except Exception:
+				pass
+
+			if hasattr(file_storage, 'seek'):
+				file_storage.seek(0)
 			with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp:
 				try:
 					file_storage.save(tmp.name)

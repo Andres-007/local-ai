@@ -13,6 +13,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const chatForm = document.getElementById('chat-form');
     const chatInput = document.getElementById('chat-input');
     const fileInput = document.getElementById('file-input');
+    const attachmentsPreview = document.getElementById('attachments-preview');
     const sendBtn = document.getElementById('send-btn');
     const sidebarOverlay = document.getElementById('sidebar-overlay');
     const previewModal = document.getElementById('preview-modal');
@@ -60,12 +61,51 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     sidebarOverlay.addEventListener('click', closeSidebar);
 
-    newChatBtn.addEventListener('click', () => {
-        currentConversationId = null;
-        chatContainer.innerHTML = `<div class="empty-state"><div class="empty-state-icon">💬</div><h2>¿En qué puedo ayudarte hoy?</h2><p>Puedo ayudarte a crear, depurar y mejorar tu código web</p></div>`;
-        document.querySelectorAll('.conversation-item').forEach(el => el.classList.remove('active'));
-        if (window.innerWidth < 768) closeSidebar();
-    });
+    function escapeHtml(s) {
+        return String(s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    function renderAttachmentPreview() {
+        const file = fileInput.files[0];
+        if (!file) {
+            attachmentsPreview.innerHTML = '';
+            return;
+        }
+        const safeName = escapeHtml(file.name);
+        const size = file.size < 1024 ? `${file.size} B` : file.size < 1024 * 1024 ? `${(file.size / 1024).toFixed(1)} KB` : `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
+        attachmentsPreview.innerHTML = `
+            <div class="attachment-chip">
+                <span class="attachment-icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                </span>
+                <span class="attachment-name" title="${safeName}">${safeName}</span>
+                <span class="attachment-size">${size}</span>
+                <button type="button" class="attachment-remove" aria-label="Quitar archivo" title="Quitar archivo">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+        `;
+        attachmentsPreview.querySelector('.attachment-remove').addEventListener('click', (e) => {
+            e.preventDefault();
+            fileInput.value = '';
+            renderAttachmentPreview();
+        });
+    }
+
+    fileInput.addEventListener('change', renderAttachmentPreview);
+
+    newChatBtn.addEventListener('click', () => {
+        currentConversationId = null;
+        chatContainer.innerHTML = `<div class="empty-state"><div class="empty-state-icon">💬</div><h2>¿En qué puedo ayudarte hoy?</h2><p>Puedo ayudarte a crear, depurar y mejorar tu código web</p></div>`;
+        document.querySelectorAll('.conversation-item').forEach(el => el.classList.remove('active'));
+        fileInput.value = '';
+        renderAttachmentPreview();
+        if (window.innerWidth < 768) closeSidebar();
+    });
 
     conversationsList.addEventListener('click', (e) => {
         const deleteBtn = e.target.closest('.delete-btn');
@@ -223,6 +263,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const typingIndicator = appendMessage('<div class="typing-indicator"><span></span><span></span><span></span></div>', 'bot', true);
     chatInput.value = '';
     fileInput.value = '';
+    renderAttachmentPreview();
     autoResizeTextarea();
     sendBtn.disabled = true;
 
