@@ -69,14 +69,20 @@ class ChatDatabase:
             if not uri or not (uri.startswith('mongodb://') or uri.startswith('mongodb+srv://')):
                 raise ValueError(f"URI inválida: debe comenzar con 'mongodb://' o 'mongodb+srv://'")
             last_error = None
+            # Opciones para entornos cloud (Render, etc.): timeouts más altos
+            client_options = {
+                "serverSelectionTimeoutMS": 30000,
+                "connectTimeoutMS": 20000,
+                "socketTimeoutMS": 20000,
+                "retryWrites": True,
+            }
             for attempt_uri in [uri, _resolve_mongodb_srv_via_nslookup(uri)]:
                 if not attempt_uri:
                     continue
                 try:
                     self.client = MongoClient(
                         attempt_uri,
-                        serverSelectionTimeoutMS=20000,
-                        connectTimeoutMS=15000
+                        **client_options
                     )
                     self.db = self.client[Config.MONGODB_DB_NAME]
                     self.conversations = self.db['conversations']

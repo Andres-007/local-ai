@@ -4,6 +4,7 @@ google-generativeai
 python-dotenv
 gunicorn
 pymongo
+dnspython
 Werkzeug
 authlib
 httpx
