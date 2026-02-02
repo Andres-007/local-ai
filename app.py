@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, jsonify, session, Response, redirect, url_for
 from flask_cors import CORS
+from authlib.integrations.flask_client import OAuth
 from model.model import WebDevAI
 from model.database import ChatDatabase
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -11,6 +12,19 @@ from bson.errors import InvalidId
 
 app = Flask(__name__, template_folder='web/templates', static_folder='web/static')
 app.secret_key = os.getenv('SECRET_KEY', secrets.token_hex(16))
+
+# OAuth Google (opcional: requiere GOOGLE_CLIENT_ID y GOOGLE_CLIENT_SECRET en .env)
+oauth = OAuth(app)
+google_client_id = os.getenv('GOOGLE_CLIENT_ID', '').strip()
+google_client_secret = os.getenv('GOOGLE_CLIENT_SECRET', '').strip()
+if google_client_id and google_client_secret:
+    oauth.register(
+        name='google',
+        client_id=google_client_id,
+        client_secret=google_client_secret,
+        server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+        client_kwargs={'scope': 'openid email profile'}
+    )
 
 # Configuración de CORS más específica si es necesario, pero esto funciona para desarrollo
 CORS(app) 
@@ -87,11 +101,13 @@ def login():
 
     user = db.get_user_by_email(email)
 
-    if user and check_password_hash(user['password'], password):
+    if not user or not user.get('password'):
+        return jsonify({"error": "Credenciales inválidas"}), 401
+    if check_password_hash(user['password'], password):
         session['user_id'] = str(user['_id'])
         session['user_email'] = user['email']
         return jsonify({"message": "Inicio de sesión exitoso"}), 200
-    
+
     return jsonify({"error": "Credenciales inválidas"}), 401
 
 @app.route('/register', methods=['POST'])
@@ -123,6 +139,63 @@ def register():
 def logout():
     session.clear()
     return redirect(url_for('index'))
+
+
+@app.route('/forgot-password', methods=['POST'])
+def forgot_password():
+    """Recuperar contraseña: recibe email y responde siempre igual por seguridad."""
+    data = request.get_json(silent=True) or {}
+    email = (data.get('email') or '').strip()
+    if not email:
+        return jsonify({"error": "El email es requerido"}), 400
+    # Por seguridad no revelamos si el email existe. Aquí podrías enviar un correo real con Flask-Mail.
+    return jsonify({
+        "message": "Si existe una cuenta con ese email, recibirás un enlace para restablecer tu contraseña en unos minutos."
+    }), 200
+
+
+@app.route('/auth/google')
+def auth_google():
+    """Redirige a Google para iniciar sesión con OAuth."""
+    if not google_client_id or not google_client_secret:
+        return redirect(url_for('index') + '?error=google_not_configured')
+    return oauth.google.authorize_redirect(url_for('auth_google_callback', _external=True))
+
+
+@app.route('/auth/google/callback')
+def auth_google_callback():
+    """Callback de Google OAuth: crea o obtiene usuario y deja sesión iniciada."""
+    if not google_client_id or not google_client_secret:
+        return redirect(url_for('index'))
+    try:
+        token = oauth.google.authorize_access_token()
+        user_info = token.get('userinfo') or {}
+        email = (user_info.get('email') or '').strip().lower()
+        google_id = user_info.get('sub')
+        name = user_info.get('name') or ''
+        if not email or not google_id:
+            return redirect(url_for('index') + '?error=invalid_google_user')
+        if not db._ensure_connection():
+            return redirect(url_for('index') + '?error=service_unavailable')
+        user = db.get_user_by_google_id(google_id)
+        if not user:
+            user = db.get_user_by_email(email)
+            if user:
+                db.link_google_to_user(str(user['_id']), google_id, name)
+                user_id = str(user['_id'])
+            else:
+                user_id = db.create_google_user(email, google_id, name)
+                if not user_id:
+                    return redirect(url_for('index') + '?error=create_failed')
+        else:
+            user_id = str(user['_id'])
+        session['user_id'] = user_id
+        session['user_email'] = email
+        return redirect(url_for('chat'))
+    except Exception as e:
+        print(f"Google OAuth error: {e}")
+        return redirect(url_for('index') + '?error=oauth_failed')
+
 
 @app.route('/api/check_auth')
 def check_auth():

@@ -136,6 +136,39 @@ class ChatDatabase:
             return None
         return self.users.find_one({'email': email.lower()})
 
+    def get_user_by_google_id(self, google_id):
+        """Busca un usuario por su ID de Google (OAuth)."""
+        if not self._ensure_connection():
+            return None
+        return self.users.find_one({'google_id': google_id})
+
+    def create_google_user(self, email, google_id, name=None):
+        """Crea un usuario vinculado a Google (sin contraseña local)."""
+        if not self._ensure_connection():
+            return None
+        user_data = {
+            'email': email.lower(),
+            'google_id': google_id,
+            'name': name or '',
+            'password': None,
+            'created_at': datetime.utcnow()
+        }
+        result = self.users.insert_one(user_data)
+        return str(result.inserted_id)
+
+    def link_google_to_user(self, user_id, google_id, name=None):
+        """Vincula una cuenta Google a un usuario existente (por email)."""
+        if not self._ensure_connection():
+            return False
+        try:
+            self.users.update_one(
+                {'_id': ObjectId(user_id)},
+                {'$set': {'google_id': google_id, 'name': name or ''}}
+            )
+            return True
+        except Exception:
+            return False
+
     def get_user_by_id(self, user_id):
         """Busca un usuario por su ID."""
         if not self._ensure_connection():

@@ -1,12 +1,17 @@
 document.addEventListener('DOMContentLoaded', function() {
     // --- Selectores de Modales ---
     const authModal = document.getElementById('authModal');
-    const loginBtn = document.getElementById('loginBtn');
-    const registerBtn = document.getElementById('registerBtn');
+    const authBtn = document.getElementById('authBtn');
     const closeModalBtn = document.getElementById('closeModalBtn');
     const authTabs = document.querySelectorAll('#authModal .modal-tab');
     const authFormContainers = document.querySelectorAll('#authModal .form-container');
     const errorMessage = document.getElementById('errorMessage');
+    const forgotPasswordLink = document.getElementById('forgotPasswordLink');
+    const forgotPasswordModal = document.getElementById('forgotPasswordModal');
+    const closeForgotModalBtn = document.getElementById('closeForgotModalBtn');
+    const forgotPasswordForm = document.getElementById('forgotPasswordForm');
+    const forgotErrorMessage = document.getElementById('forgotErrorMessage');
+    const forgotSuccessMessage = document.getElementById('forgotSuccessMessage');
 
     const projectDetailsModal = document.getElementById('projectDetailsModal');
     const closeProjectModalBtn = document.getElementById('closeProjectModalBtn');
@@ -41,16 +46,49 @@ document.addEventListener('DOMContentLoaded', function() {
     };
 
     // --- Event Listeners para Modal de Auth ---
-    loginBtn.addEventListener('click', () => {
+    authBtn.addEventListener('click', () => {
         switchAuthTab('login');
-        openModal('authModal');
-    });
-    registerBtn.addEventListener('click', () => {
-        switchAuthTab('register');
         openModal('authModal');
     });
     closeModalBtn.addEventListener('click', () => closeModal('authModal'));
     authModal.addEventListener('click', (e) => e.target === authModal && closeModal('authModal'));
+
+    // --- Olvidé mi contraseña ---
+    forgotPasswordLink.addEventListener('click', (e) => {
+        e.preventDefault();
+        closeModal('authModal');
+        forgotErrorMessage.style.display = 'none';
+        forgotSuccessMessage.style.display = 'none';
+        document.getElementById('forgotEmail').value = '';
+        openModal('forgotPasswordModal');
+    });
+    closeForgotModalBtn.addEventListener('click', () => closeModal('forgotPasswordModal'));
+    forgotPasswordModal.addEventListener('click', (e) => e.target === forgotPasswordModal && closeModal('forgotPasswordModal'));
+    forgotPasswordForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        forgotErrorMessage.style.display = 'none';
+        forgotSuccessMessage.style.display = 'none';
+        const email = document.getElementById('forgotEmail').value.trim();
+        try {
+            const res = await fetch('/forgot-password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email })
+            });
+            const data = await res.json();
+            if (res.ok) {
+                forgotSuccessMessage.textContent = data.message || 'Si existe una cuenta con ese email, recibirás un enlace para restablecer tu contraseña.';
+                forgotSuccessMessage.style.display = 'block';
+                forgotPasswordForm.reset();
+            } else {
+                forgotErrorMessage.textContent = data.error || 'Error al enviar. Intenta de nuevo.';
+                forgotErrorMessage.style.display = 'block';
+            }
+        } catch (err) {
+            forgotErrorMessage.textContent = 'Error de conexión. Intenta de nuevo.';
+            forgotErrorMessage.style.display = 'block';
+        }
+    });
 
     authTabs.forEach(tab => {
         tab.addEventListener('click', () => {
@@ -234,30 +272,30 @@ document.addEventListener('DOMContentLoaded', function() {
             swiperInstance.destroy(true, true); 
         }
         swiperInstance = new Swiper('.mySwiper', {
-            loop: swiperWrapper.querySelectorAll('.swiper-slide').length > 2, 
+            loop: swiperWrapper.querySelectorAll('.swiper-slide').length > 2,
             grabCursor: true,
-            slidesPerView: 1, 
+            slidesPerView: 1,
             spaceBetween: 30,
-            
+            speed: 600,
+            autoplay: {
+                delay: 3000,
+                disableOnInteraction: false,
+            },
+
             breakpoints: {
                 768: {
-                  slidesPerView: 2,
-                  spaceBetween: 30
+                    slidesPerView: 2,
+                    spaceBetween: 30
                 },
-                1024: { 
+                1024: {
                     slidesPerView: 3,
                     spaceBetween: 30
                 }
             },
-    
+
             pagination: {
                 el: '.swiper-pagination',
                 clickable: true,
-            },
-    
-            navigation: {
-                nextEl: '.swiper-button-next',
-                prevEl: '.swiper-button-prev',
             },
         });
     }
@@ -342,6 +380,26 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         } catch (err) { showError('Error de conexión con el servidor.'); }
     });
+
+    // --- Mostrar error en URL (ej. ?error=oauth_failed) ---
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlError = urlParams.get('error');
+    if (urlError) {
+        const messages = {
+            google_not_configured: 'Inicio con Google no está configurado. Usa email y contraseña.',
+            oauth_failed: 'Error al iniciar sesión con Google. Intenta de nuevo o usa email.',
+            invalid_google_user: 'No se pudo obtener tu información de Google.',
+            service_unavailable: 'Servicio no disponible. Intenta más tarde.',
+            create_failed: 'No se pudo crear la cuenta. Intenta más tarde.'
+        };
+        const msg = messages[urlError] || 'Ha ocurrido un error.';
+        authBtn.click();
+        setTimeout(() => {
+            errorMessage.textContent = msg;
+            errorMessage.style.display = 'block';
+        }, 300);
+        window.history.replaceState({}, '', window.location.pathname);
+    }
 
     // --- Animación de Scroll ---
     const faders = document.querySelectorAll('.fade-in');

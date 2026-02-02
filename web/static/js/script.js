@@ -385,6 +385,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const msgGroup = buildMessageElement(text, role, isTyping);
         chatContainer.appendChild(msgGroup);
         chatContainer.scrollTop = chatContainer.scrollHeight;
+        requestAnimationFrame(() => {
+            msgGroup.classList.add('message-enter');
+        });
         if (role === 'bot' && !isTyping) addPreviewButton(msgGroup.querySelector('.message-content'));
         return msgGroup;
     }
@@ -393,7 +396,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!messages.length) return;
         const frag = document.createDocumentFragment();
         messages.forEach(msg => {
-            frag.appendChild(buildMessageElement(msg.content || '', msg.role || 'user'));
+            const el = buildMessageElement(msg.content || '', msg.role || 'user');
+            el.classList.add('message-enter');
+            frag.appendChild(el);
         });
         const loadMoreBtn = chatContainer.querySelector('.load-more-messages');
         const insertBefore = loadMoreBtn ? loadMoreBtn.nextSibling : chatContainer.firstChild;
