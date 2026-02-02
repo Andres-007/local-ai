@@ -2,6 +2,7 @@ import google.generativeai as genai
 import os
 import sys
 import tempfile
+import io
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if ROOT_DIR not in sys.path:
@@ -101,74 +102,249 @@ class WebDevAI:
 
 	# Extensiones de archivos de código/texto soportados
 	TEXT_EXTENSIONS = frozenset({
-		'.txt', '.md', '.py', '.js', '.ts', '.tsx', '.jsx', '.mjs', '.cjs', '.java', '.c', '.cpp', '.cc', '.cxx', '.h', '.hpp', '.hxx',
-		'.cs', '.vb', '.fs', '.fsx', '.go', '.rs', '.php', '.rb', '.swift', '.kt', '.kts', '.scala', '.sql', '.html', '.htm', '.css', '.scss', '.sass', '.less',
-		'.json', '.yaml', '.yml', '.xml', '.toml', '.ini', '.cfg', '.conf', '.env', '.sh', '.bash', '.bat', '.ps1', '.psm1',
+		'.txt', '.md', '.mdx', '.markdown', '.py', '.pyw', '.pyi', '.js', '.ts', '.tsx', '.jsx', '.mjs', '.cjs',
+		'.java', '.c', '.cpp', '.cc', '.cxx', '.h', '.hpp', '.hxx', '.cs', '.vb', '.fs', '.fsx', '.go', '.rs',
+		'.php', '.rb', '.erb', '.swift', '.kt', '.kts', '.scala', '.sql', '.html', '.htm', '.xhtml',
+		'.css', '.scss', '.sass', '.less', '.json', '.yaml', '.yml', '.xml', '.toml', '.ini', '.cfg', '.conf',
+		'.env', '.sh', '.bash', '.zsh', '.bat', '.cmd', '.ps1', '.psm1', '.psd1',
 		'.vue', '.svelte', '.dart', '.r', '.lua', '.ex', '.exs', '.cr', '.nim', '.zig', '.v', '.sv', '.proto',
-		'.graphql', '.gql', '.prisma', '.dockerfile', '.gitignore', '.env.example'
+		'.graphql', '.gql', '.prisma', '.dockerfile', '.gitignore', '.env.example', '.csv', '.log', '.rst',
+		'.tex', '.latex', '.pl', '.pm', '.t', '.hs', '.lhs', '.ml', '.mli', '.fsi', '.clj', '.cljs', '.edn',
+		'.coffee', '.litcoffee', '.elm', '.purs', '.adb', '.ads', '.vhd', '.vhdl',
+	})
+
+	# Tamaño máximo (bytes) para incluir archivo completo como texto; el resto se trunca
+	MAX_TEXT_FILE_BYTES = 1 * 1024 * 1024  # 1 MB
+
+	# MIME types típicos de código y texto (además de text/*)
+	TEXT_MIMETYPES = frozenset({
+		'application/json', 'application/xml', 'application/javascript', 'application/typescript',
+		'application/x-python', 'text/x-python', 'text/x-python3',
+		'text/x-javascript', 'text/x-typescript', 'text/x-c', 'text/x-c++',
+		'text/x-java', 'text/x-php', 'text/x-ruby', 'text/x-go', 'text/x-rust',
+		'text/x-sh', 'text/x-shellscript', 'application/x-sh', 'application/x-bat',
+		'application/x-yaml', 'application/yaml', 'text/yaml',
+		'text/xml', 'text/csv', 'text/plain', 'text/markdown',
 	})
 
 	def _is_text_file(self, filename, mimetype):
-		if mimetype and (mimetype.startswith('text/') or mimetype in ('application/json', 'application/xml', 'application/javascript')):
-			return True
+		if mimetype:
+			m = mimetype.split(';')[0].strip().lower()
+			if m.startswith('text/') or m in self.TEXT_MIMETYPES:
+				return True
 		ext = os.path.splitext(filename.lower())[1]
 		return ext in self.TEXT_EXTENSIONS
 
+	def _lang_for_filename(self, filename):
+		"""Devuelve el nombre del lenguaje para bloques de código (Markdown)."""
+		ext = os.path.splitext(filename.lower())[1]
+		lang_map = {
+			'.py': 'python', '.pyw': 'python', '.pyi': 'python',
+			'.js': 'javascript', '.mjs': 'javascript', '.cjs': 'javascript',
+			'.ts': 'typescript', '.tsx': 'typescript', '.jsx': 'javascript',
+			'.html': 'html', '.htm': 'html', '.xhtml': 'html',
+			'.css': 'css', '.scss': 'scss', '.sass': 'sass', '.less': 'less',
+			'.json': 'json', '.yaml': 'yaml', '.yml': 'yaml', '.xml': 'xml',
+			'.md': 'markdown', '.mdx': 'markdown', '.markdown': 'markdown',
+			'.java': 'java', '.c': 'c', '.cpp': 'cpp', '.h': 'c', '.hpp': 'cpp',
+			'.cs': 'csharp', '.go': 'go', '.rs': 'rust', '.php': 'php', '.rb': 'ruby',
+			'.swift': 'swift', '.kt': 'kotlin', '.kts': 'kotlin', '.scala': 'scala',
+			'.sql': 'sql', '.sh': 'bash', '.bash': 'bash', '.ps1': 'powershell',
+			'.vue': 'vue', '.svelte': 'svelte', '.dart': 'dart', '.lua': 'lua',
+			'.r': 'r', '.graphql': 'graphql', '.gql': 'graphql', '.prisma': 'prisma',
+			'.dockerfile': 'dockerfile', '.proto': 'protobuf', '.toml': 'toml',
+			'.log': 'log', '.txt': 'text', '.csv': 'csv', '.rst': 'rst', '.tex': 'latex',
+		}
+		return lang_map.get(ext, '')
+
+	def _is_pdf(self, filename, mimetype):
+		if mimetype and mimetype == 'application/pdf':
+			return True
+		return os.path.splitext(filename.lower())[1] == '.pdf'
+
 	def _read_file_content(self, file_storage):
-		"""Lee el contenido de un archivo como texto UTF-8, manejando streams correctamente."""
+		"""Lee el contenido de un archivo como texto, probando UTF-8, latin-1 y cp1252. Trunca si supera MAX_TEXT_FILE_BYTES."""
 		try:
 			if hasattr(file_storage, 'seek'):
-				file_storage.seek(0)
-			raw = file_storage.read() if hasattr(file_storage, 'read') else file_storage.stream.read()
+				try:
+					file_storage.seek(0)
+				except (OSError, AttributeError):
+					pass
+			stream = getattr(file_storage, 'stream', file_storage)
+			raw = stream.read() if hasattr(stream, 'read') else file_storage.read()
+			if raw is None:
+				raw = b""
 			if isinstance(raw, str):
-				return raw
-			return raw.decode('utf-8', errors='replace')
+				raw = raw.encode('utf-8', errors='replace')
+			if not isinstance(raw, (bytes, bytearray)):
+				raw = bytes(raw) if raw else b""
+			if len(raw) > self.MAX_TEXT_FILE_BYTES:
+				raw = raw[:self.MAX_TEXT_FILE_BYTES]
+				truncated_note = f"\n\n[... archivo truncado (máx. {self.MAX_TEXT_FILE_BYTES // 1024} KB) ...]"
+			else:
+				truncated_note = ""
+			for encoding in ('utf-8', 'latin-1', 'cp1252', 'utf-8-sig'):
+				try:
+					return raw.decode(encoding) + truncated_note
+				except (UnicodeDecodeError, LookupError):
+					continue
+			return raw.decode('utf-8', errors='replace') + truncated_note
 		except Exception as e:
 			print(f"Error leyendo archivo: {e}")
 			raise
 
-	def generate_with_file(self, prompt, file_storage):
+	def _read_pdf_content(self, file_storage):
+		"""Extrae el texto de un PDF usando pypdf (o PyPDF2 como fallback)."""
 		try:
-			filename = file_storage.filename or "archivo"
-			mimetype = file_storage.mimetype or ""
-			use_text_path = self._is_text_file(filename, mimetype)
-			if use_text_path:
-				content = self._read_file_content(file_storage)
-				combined_prompt = (
-					f"{prompt}\n\nArchivo adjunto: {filename}\n```\n{content}\n```"
-				).strip()
+			try:
+				from pypdf import PdfReader
+			except ImportError:
+				from PyPDF2 import PdfReader
+		except ImportError as e:
+			print(f"Error: instala pypdf con 'pip install pypdf': {e}")
+			raise
+		try:
+			if hasattr(file_storage, 'seek'):
+				file_storage.seek(0)
+			raw = file_storage.read() if hasattr(file_storage, 'read') else file_storage.stream.read()
+			if not raw:
+				return ""
+			if isinstance(raw, str):
+				raw = raw.encode('utf-8', errors='replace')
+			if hasattr(file_storage, 'seek'):
+				file_storage.seek(0)
+			reader = PdfReader(io.BytesIO(raw))
+			parts = []
+			for page in reader.pages:
+				try:
+					text = page.extract_text()
+					if text and isinstance(text, str):
+						parts.append(text.strip())
+				except Exception:
+					pass
+			return "\n\n".join(parts) if parts else ""
+		except Exception as e:
+			print(f"Error leyendo PDF: {e}")
+			raise
+
+	def _read_file_storage_once(self, file_storage):
+		"""Lee el stream del archivo UNA sola vez y devuelve bytes. Evita 'I/O operation on closed file'."""
+		try:
+			if hasattr(file_storage, 'seek'):
+				try:
+					file_storage.seek(0)
+				except (OSError, AttributeError):
+					pass
+			stream = getattr(file_storage, 'stream', file_storage)
+			raw = stream.read() if hasattr(stream, 'read') else file_storage.read()
+			if raw is None:
+				return b""
+			if isinstance(raw, str):
+				raw = raw.encode('utf-8', errors='replace')
+			return bytes(raw) if not isinstance(raw, bytes) else raw
+		except Exception as e:
+			print(f"Error leyendo archivo adjunto (una vez): {e}")
+			return None
+
+	def _wrap_bytes_as_file_like(self, raw_bytes, filename, mimetype):
+		"""Envuelve bytes en un objeto tipo file (read/seek/filename/mimetype) para reutilizar sin cerrar el stream."""
+		class _FileLike:
+			__slots__ = ('_io', 'filename', 'mimetype')
+			def __init__(self, raw, fn, mt):
+				self._io = io.BytesIO(raw)
+				self.filename = fn
+				self.mimetype = mt or ""
+			def read(self):
+				return self._io.read()
+			def seek(self, pos=0):
+				return self._io.seek(pos)
+			@property
+			def stream(self):
+				return self._io
+		return _FileLike(raw_bytes, filename, mimetype)
+
+	def _get_readable_content(self, file_storage, filename, mimetype):
+		"""Obtiene el contenido como texto si el archivo es legible (texto, código o PDF)."""
+		try:
+			if self._is_pdf(filename, mimetype):
+				text = self._read_pdf_content(file_storage)
+				return text if text and text.strip() else None
+			if self._is_text_file(filename, mimetype):
+				return self._read_file_content(file_storage)
+			return self._read_file_content(file_storage)
+		except Exception as e:
+			print(f"Error en _get_readable_content ({filename}): {e}")
+			return None
+
+	def generate_with_file(self, prompt, file_storage=None, file_bytes=None, filename=None, mimetype=None):
+		try:
+			if file_bytes is not None:
+				raw = file_bytes if isinstance(file_bytes, bytes) else bytes(file_bytes)
+				filename = filename or "archivo"
+				mimetype = mimetype or ""
+			else:
+				if file_storage is None:
+					return "Error: No se proporcionó archivo."
+				filename = file_storage.filename or "archivo"
+				mimetype = file_storage.mimetype or ""
+				raw = self._read_file_storage_once(file_storage)
+				if raw is None:
+					return "Error: No se pudo leer el archivo adjunto (stream cerrado o no disponible)."
+			file_like = self._wrap_bytes_as_file_like(raw, filename, mimetype)
+			ext = os.path.splitext(filename.lower())[1]
+			content = self._get_readable_content(file_like, filename, mimetype)
+
+			if content is not None and len(content.strip()) > 0:
+				lang = self._lang_for_filename(filename)
+				code_block = f"```{lang}\n{content}\n```" if lang else f"```\n{content}\n```"
+				combined_prompt = f"{prompt}\n\nArchivo adjunto: {filename}\n{code_block}".strip()
 				self.convo.send_message(combined_prompt)
 				return self._safe_last_text()
 
-			try:
-				content = self._read_file_content(file_storage)
-				if content and len(content.strip()) > 0:
-					combined_prompt = (
-						f"{prompt}\n\nArchivo adjunto: {filename}\n```\n{content}\n```"
-					).strip()
+			if ext == ".pdf":
+				return (
+					"No se pudo extraer texto de este PDF. Puede estar escaneado (solo imágenes), "
+					"protegido o dañado. Prueba con un PDF con texto seleccionable o con otro archivo."
+				)
+
+			if ext in self.TEXT_EXTENSIONS:
+				try:
+					content2 = self._read_file_content(file_like)
+					if not content2 or not content2.strip():
+						return "El archivo está vacío o no se pudo leer su contenido."
+					lang = self._lang_for_filename(filename)
+					code_block = f"```{lang}\n{content2}\n```" if lang else f"```\n{content2}\n```"
+					combined_prompt = f"{prompt}\n\nArchivo adjunto: {filename}\n{code_block}".strip()
 					self.convo.send_message(combined_prompt)
 					return self._safe_last_text()
-			except Exception:
-				pass
+				except Exception as e2:
+					print(f"Error leyendo archivo de código ({filename}): {e2}")
+					return f"No se pudo leer el archivo {filename}. Comprueba que no esté dañado. Detalle: {e2}"
 
-			if hasattr(file_storage, 'seek'):
-				file_storage.seek(0)
+			tmp_path = None
 			with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp:
 				try:
-					file_storage.save(tmp.name)
+					tmp.write(raw)
+					tmp.flush()
+					tmp.close()
+					tmp_path = tmp.name
 				except OSError:
 					return "Error: No se pudo guardar el archivo adjunto."
-				uploaded = genai.upload_file(tmp.name)
 			try:
+				uploaded = genai.upload_file(tmp_path)
 				self.convo.send_message([uploaded, prompt or f"Analiza el archivo {filename}."])
 				return self._safe_last_text()
 			finally:
-				try:
-					os.unlink(tmp.name)
-				except FileNotFoundError:
-					pass
+				if tmp_path:
+					try:
+						os.unlink(tmp_path)
+					except FileNotFoundError:
+						pass
 		except Exception as e:
 			print(f"Error al contactar con archivo: {e}")
+			err_msg = str(e).strip() if e else ""
+			if "pypdf" in err_msg.lower() or "PyPDF" in err_msg or "pdf" in err_msg.lower():
+				return "Error al leer el PDF. Asegúrate de tener instalado: pip install pypdf"
 			return "Error: No se pudo procesar el archivo. Verifica el formato e inténtalo de nuevo."
 	
 	def generate_stream(self, prompt):
@@ -190,55 +366,88 @@ class WebDevAI:
 			print(f"Error al contactar (streaming): {e}")
 			yield "Error: No se pudo obtener una respuesta del modelo. Verifica la conexión a internet."
 
-	def generate_stream_with_file(self, prompt, file_storage):
+	def generate_stream_with_file(self, prompt, file_storage=None, file_bytes=None, filename=None, mimetype=None):
 		try:
-			filename = file_storage.filename or "archivo"
-			mimetype = file_storage.mimetype or ""
-			use_text_path = self._is_text_file(filename, mimetype)
-			if use_text_path:
-				content = self._read_file_content(file_storage)
-				combined_prompt = (
-					f"{prompt}\n\nArchivo adjunto: {filename}\n```\n{content}\n```"
-				).strip()
+			if file_bytes is not None:
+				raw = file_bytes if isinstance(file_bytes, bytes) else bytes(file_bytes)
+				filename = filename or "archivo"
+				mimetype = mimetype or ""
+			else:
+				if file_storage is None:
+					yield "Error: No se proporcionó archivo."
+					return
+				filename = file_storage.filename or "archivo"
+				mimetype = file_storage.mimetype or ""
+				raw = self._read_file_storage_once(file_storage)
+				if raw is None:
+					yield "Error: No se pudo leer el archivo adjunto (stream cerrado o no disponible)."
+					return
+			file_like = self._wrap_bytes_as_file_like(raw, filename, mimetype)
+			ext = os.path.splitext(filename.lower())[1]
+			content = self._get_readable_content(file_like, filename, mimetype)
+
+			if content is not None and len(content.strip()) > 0:
+				lang = self._lang_for_filename(filename)
+				code_block = f"```{lang}\n{content}\n```" if lang else f"```\n{content}\n```"
+				combined_prompt = f"{prompt}\n\nArchivo adjunto: {filename}\n{code_block}".strip()
 				response = self.convo.send_message(combined_prompt, stream=True)
 				for chunk in response:
 					if getattr(chunk, "text", None):
 						yield chunk.text
 				return
 
-			try:
-				content = self._read_file_content(file_storage)
-				if content and len(content.strip()) > 0:
-					combined_prompt = (
-						f"{prompt}\n\nArchivo adjunto: {filename}\n```\n{content}\n```"
-					).strip()
+			if ext == ".pdf":
+				yield (
+					"No se pudo extraer texto de este PDF. Puede estar escaneado (solo imágenes), "
+					"protegido o dañado. Prueba con un PDF con texto seleccionable o con otro archivo."
+				)
+				return
+
+			if ext in self.TEXT_EXTENSIONS:
+				try:
+					content2 = self._read_file_content(file_like)
+					if not content2 or not content2.strip():
+						yield "El archivo está vacío o no se pudo leer su contenido."
+						return
+					lang = self._lang_for_filename(filename)
+					code_block = f"```{lang}\n{content2}\n```" if lang else f"```\n{content2}\n```"
+					combined_prompt = f"{prompt}\n\nArchivo adjunto: {filename}\n{code_block}".strip()
 					response = self.convo.send_message(combined_prompt, stream=True)
 					for chunk in response:
 						if getattr(chunk, "text", None):
 							yield chunk.text
 					return
-			except Exception:
-				pass
+				except Exception as e2:
+					print(f"Error leyendo archivo de código ({filename}): {e2}")
+					yield f"No se pudo leer el archivo {filename}. Comprueba que no esté dañado. Detalle: {e2}"
+					return
 
-			if hasattr(file_storage, 'seek'):
-				file_storage.seek(0)
+			tmp_path = None
 			with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp:
 				try:
-					file_storage.save(tmp.name)
+					tmp.write(raw)
+					tmp.flush()
+					tmp.close()
+					tmp_path = tmp.name
 				except OSError:
 					yield "Error: No se pudo guardar el archivo adjunto."
 					return
-				uploaded = genai.upload_file(tmp.name)
 			try:
+				uploaded = genai.upload_file(tmp_path)
 				response = self.convo.send_message([uploaded, prompt or f"Analiza el archivo {filename}."], stream=True)
 				for chunk in response:
 					if getattr(chunk, "text", None):
 						yield chunk.text
 			finally:
-				try:
-					os.unlink(tmp.name)
-				except FileNotFoundError:
-					pass
+				if tmp_path:
+					try:
+						os.unlink(tmp_path)
+					except FileNotFoundError:
+						pass
 		except Exception as e:
 			print(f"Error al contactar con archivo (streaming): {e}")
-			yield "Error: No se pudo procesar el archivo. Verifica el formato e inténtalo de nuevo."
+			err_msg = str(e).strip() if e else ""
+			if "pypdf" in err_msg.lower() or "PyPDF" in err_msg or "pdf" in err_msg.lower():
+				yield "Error al leer el PDF. Asegúrate de tener instalado: pip install pypdf"
+			else:
+				yield "Error: No se pudo procesar el archivo. Verifica el formato e inténtalo de nuevo."

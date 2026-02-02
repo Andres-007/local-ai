@@ -66,8 +66,12 @@ class ChatDatabase:
         """Inicializa la conexión a MongoDB y las colecciones"""
         try:
             uri = (Config.MONGODB_URI or "").strip()
-            if not uri or not (uri.startswith('mongodb://') or uri.startswith('mongodb+srv://')):
-                raise ValueError(f"URI inválida: debe comenzar con 'mongodb://' o 'mongodb+srv://'")
+            if not uri:
+                raise ValueError(
+                    "MONGODB_URI no está configurada. En Render: Dashboard → tu servicio → Environment → añade MONGODB_URI con tu URI de Atlas (mongodb+srv://...)."
+                )
+            if not (uri.startswith('mongodb://') or uri.startswith('mongodb+srv://')):
+                raise ValueError(f"URI inválida: debe comenzar con 'mongodb://' o 'mongodb+srv://' (revisa que MONGODB_URI esté bien en Environment de Render).")
             last_error = None
             # Opciones para entornos cloud (Render, etc.): timeouts más altos
             client_options = {

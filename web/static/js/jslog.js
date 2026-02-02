@@ -24,26 +24,48 @@ document.addEventListener('DOMContentLoaded', function() {
     const swiperWrapper = document.querySelector('#projectsCarousel .swiper-wrapper');
 
     // --- Lógica General de Modales ---
+    let scrollYOnModalOpen = 0;
+
     const openModal = (modalId) => {
         const modal = document.getElementById(modalId);
-        if (modal) modal.classList.add('active');
+        if (modal) {
+            if (!document.querySelector('.modal-overlay.active')) {
+                scrollYOnModalOpen = window.scrollY || window.pageYOffset;
+            }
+            modal.classList.add('active');
+            document.documentElement.classList.add('modal-open');
+            document.body.classList.add('modal-open');
+        }
     };
 
     const closeModal = (modalId) => {
         const modal = document.getElementById(modalId);
         if (modal) modal.classList.remove('active');
-        
+
+        if (!document.querySelector('.modal-overlay.active')) {
+            document.documentElement.classList.remove('modal-open');
+            document.body.classList.remove('modal-open');
+            window.scrollTo(0, scrollYOnModalOpen);
+        }
+
         // Limpiar iframe y resetear contenedores al cerrar modal de proyecto
         if (modalId === 'projectDetailsModal') {
             projectPreviewIframe.src = 'about:blank';
             projectPreviewIframe.srcdoc = '';
             projectCodeBlock.textContent = '';
-            
-            // Resetear la visibilidad de los contenedores
             projectPreviewContainer.classList.remove('active');
             projectCodeContainer.classList.remove('active');
         }
     };
+
+    // Evitar que la rueda del ratón en el overlay haga scroll en el fondo
+    document.querySelectorAll('.modal-overlay').forEach(function (overlay) {
+        overlay.addEventListener('wheel', function (e) {
+            if (e.target === overlay) {
+                e.preventDefault();
+            }
+        }, { passive: false });
+    });
 
     // --- Event Listeners para Modal de Auth ---
     authBtn.addEventListener('click', () => {

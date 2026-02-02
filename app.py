@@ -45,16 +45,37 @@ def _parse_paging_args(default_limit=50, max_limit=200):
     return limit, offset
 
 def _extract_request_data():
+    """Extrae prompt, conversation_id y archivo. Si hay archivo, lo lee YA en memoria (evita stream cerrado en streaming)."""
     if request.is_json:
         data = request.get_json(silent=True) or {}
         prompt = data.get('prompt')
         conversation_id = data.get('conversation_id')
         file = None
+        file_bytes = None
+        file_filename = None
+        file_mimetype = None
     else:
         prompt = request.form.get('prompt')
         conversation_id = request.form.get('conversation_id')
         file = request.files.get('file')
-    return (prompt or '').strip(), conversation_id, file
+        file_bytes = None
+        file_filename = None
+        file_mimetype = None
+        if file:
+            try:
+                file_bytes = file.read()
+                file_filename = file.filename or "archivo"
+                file_mimetype = file.mimetype or ""
+                if file_bytes is None:
+                    file_bytes = b""
+                elif isinstance(file_bytes, str):
+                    file_bytes = file_bytes.encode("utf-8", errors="replace")
+                else:
+                    file_bytes = bytes(file_bytes)
+            except Exception as e:
+                print(f"Error leyendo archivo adjunto en request: {e}")
+                file = None
+    return (prompt or '').strip(), conversation_id, file, file_bytes, file_filename, file_mimetype
 
 # --- Decorador para rutas protegidas ---
 def login_required(f):
@@ -268,15 +289,15 @@ def delete_conversation(conversation_id):
 @app.route('/api/generate', methods=['POST'])
 @login_required
 def api_generate():
-    prompt, conversation_id_str, file = _extract_request_data()
+    prompt, conversation_id_str, file, file_bytes, file_filename, file_mimetype = _extract_request_data()
     user_id = session['user_id']
     
-    if not prompt and not file:
+    if not prompt and file_bytes is None:
         return jsonify({"error": "Falta el parámetro 'prompt'"}), 400
 
     try:
         if not conversation_id_str:
-            title_source = prompt or (file.filename if file else "Nueva Conversación")
+            title_source = prompt or (file_filename if file_filename else "Nueva Conversación")
             title = title_source[:50] + "..." if len(title_source) > 50 else title_source
             conversation_id_str = db.create_conversation(user_id, title)
             if not conversation_id_str:
@@ -287,11 +308,11 @@ def api_generate():
         except InvalidId:
             return jsonify({"error": "conversation_id inválido"}), 400
 
-        user_message = prompt or (f"Archivo adjunto: {file.filename}" if file else "")
+        user_message = prompt or (f"Archivo adjunto: {file_filename}" if file_filename else "")
         if user_message:
             db.save_message(conversation_id, 'user', user_message)
-        if file:
-            response_text = ai_model.generate_with_file(prompt, file)
+        if file_bytes is not None:
+            response_text = ai_model.generate_with_file(prompt, file_bytes=file_bytes, filename=file_filename, mimetype=file_mimetype)
         else:
             response_text = ai_model.generate(prompt)
         db.save_message(conversation_id, 'bot', response_text)
@@ -307,9 +328,9 @@ def api_generate():
 @app.route('/api/generate-stream', methods=['POST'])
 @login_required
 def api_generate_stream():
-    prompt, conversation_id_str, file = _extract_request_data()
+    prompt, conversation_id_str, file, file_bytes, file_filename, file_mimetype = _extract_request_data()
     
-    if (not prompt and not file) or not conversation_id_str:
+    if (not prompt and file_bytes is None) or not conversation_id_str:
         return jsonify({"error": "Faltan 'prompt' o 'conversation_id'"}), 400
 
     def generate():
@@ -321,11 +342,14 @@ def api_generate_stream():
                 yield "Error: conversation_id inválido"
                 return
 
-            user_message = prompt or (f"Archivo adjunto: {file.filename}" if file else "")
+            user_message = prompt or (f"Archivo adjunto: {file_filename}" if file_filename else "")
             if user_message:
                 db.save_message(conversation_id, 'user', user_message)
             
-            stream = ai_model.generate_stream_with_file(prompt, file) if file else ai_model.generate_stream(prompt)
+            if file_bytes is not None:
+                stream = ai_model.generate_stream_with_file(prompt, file_bytes=file_bytes, filename=file_filename, mimetype=file_mimetype)
+            else:
+                stream = ai_model.generate_stream(prompt)
             for chunk in stream:
                 full_response += chunk
                 yield chunk

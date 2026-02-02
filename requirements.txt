@@ -5,6 +5,7 @@ python-dotenv
 gunicorn
 pymongo
 dnspython
+pypdf
 Werkzeug
 authlib
 httpx
