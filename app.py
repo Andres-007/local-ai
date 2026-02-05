@@ -365,3 +365,6 @@ def api_generate_stream():
 if __name__ == '__main__':
     # Asegúrate de que 'host' sea '0.0.0.0' si necesitas acceder desde otros dispositivos en la red
     app.run(debug=True, host='0.0.0.0', port=4000)
+
+
+#debian es gay
