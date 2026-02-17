@@ -4,6 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Web Dev AI</title>
+    <!-- Match home UI typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
     <link rel="stylesheet" href="/static/style.css">
 </head>
@@ -21,11 +25,13 @@
     </aside>
 
     <div class="main-container">
-        <header class="header">
+        <header class="header chat-navbar">
             <button class="menu-btn" id="toggle-sidebar">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
             </button>
-            <h1>Web Dev AI</h1>
+            <a class="chat-brand" href="/chat" aria-label="WebDevAI">
+                WebDev<span>AI</span>
+            </a>
             <a href="/logout" class="btn logout-btn">Cerrar Sesión</a>
         </header>
 

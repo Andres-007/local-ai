@@ -237,9 +237,24 @@ document.addEventListener('DOMContentLoaded', () => {
     confirmDeleteBtn.addEventListener('click', async () => {
         if (!conversationToDeleteId) return;
         try {
-            await fetchApi(`/api/conversations/${conversationToDeleteId}`, { method: 'DELETE' });
-            if (currentConversationId === conversationToDeleteId) newChatBtn.click();
-            loadConversations();
+            const deletingId = conversationToDeleteId;
+            const itemEl = conversationsList.querySelector(`.conversation-item[data-id="${deletingId}"]`);
+
+            await fetchApi(`/api/conversations/${deletingId}`, { method: 'DELETE' });
+            if (currentConversationId === deletingId) newChatBtn.click();
+
+            if (itemEl) {
+                itemEl.classList.add('removing');
+                const anims = (typeof itemEl.getAnimations === 'function') ? itemEl.getAnimations() : [];
+                if (anims.length) {
+                    await Promise.allSettled(anims.map(a => a.finished));
+                } else {
+                    // next frame so CSS can apply before DOM changes
+                    await new Promise(resolve => requestAnimationFrame(resolve));
+                }
+                itemEl.remove();
+            }
+            await loadConversations();
         } catch (err) {
             if (err.message !== 'No autorizado') console.error('Error eliminando:', err);
         } finally {

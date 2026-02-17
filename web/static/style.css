@@ -15,6 +15,14 @@
     --danger: #da3633;
     --danger-hover: #f85149;
     --overlay: rgba(0, 0, 0, 0.6);
+    /* Home UI brand tokens */
+    --brand-primary: #4a00e0;
+    --brand-secondary: #8e2de2;
+    --brand-gradient: linear-gradient(90deg, var(--brand-secondary), var(--brand-primary));
+    /* Scrollbar / bars (grey only, no white) */
+    --scrollbar-track: #3d3d3d;
+    --scrollbar-thumb: #8b8b8b;
+    --scrollbar-arrow: #8b8b8b;
     /* Animación: duración y easing para transiciones fluidas (GPU-friendly) */
     --duration-fast: 0.2s;
     --duration-normal: 0.3s;
@@ -24,7 +32,19 @@
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html { font-size: 62.5%; -webkit-text-size-adjust: 100%; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: var(--bg-primary); color: var(--text-primary); display: flex; height: 100vh; height: calc(var(--vh, 1vh) * 100); overflow: hidden; font-size: 1.6rem; min-height: 0; }
+body { font-family: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: var(--bg-primary); color: var(--text-primary); display: flex; height: 100vh; height: calc(var(--vh, 1vh) * 100); overflow: hidden; font-size: 1.6rem; min-height: 0; }
+
+/* Scrollbars: white track, grey thumb & arrows (applies to all bars) */
+* { scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track); scrollbar-width: thin; }
+*::-webkit-scrollbar { width: 12px; height: 12px; background: var(--scrollbar-track); }
+*::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+*::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 6px; }
+*::-webkit-scrollbar-thumb:hover { background: #6b6b6b; }
+*::-webkit-scrollbar-button { background: var(--scrollbar-track); color: var(--scrollbar-arrow); }
+*::-webkit-scrollbar-button:vertical:decrement,
+*::-webkit-scrollbar-button:vertical:increment { height: 24px; }
+*::-webkit-scrollbar-button:horizontal:decrement,
+*::-webkit-scrollbar-button:horizontal:increment { width: 24px; }
 
 /* ==========================================================================
    Sidebar y Overlay
@@ -38,10 +58,26 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Ar
 .new-chat-btn:hover { background: var(--accent-hover); transform: translateY(-1px); }
 .new-chat-btn:active { transform: translateY(0); }
 .new-chat-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.conversations-list { flex-grow: 1; overflow-y: auto; padding: 0.8rem; -webkit-overflow-scrolling: touch; }
+.conversations-list { flex-grow: 1; overflow-y: auto; padding: 0.8rem; -webkit-overflow-scrolling: touch; scrollbar-width: none; -ms-overflow-style: none; }
+.conversations-list::-webkit-scrollbar { display: none; }
 .conversation-item { padding: 1.2rem; margin-bottom: 0.4rem; border-radius: 0.8rem; cursor: pointer; display: flex; align-items: center; gap: 0.8rem; transition: background var(--duration-fast), transform var(--duration-fast); min-height: 4.4rem; }
 .conversation-item:hover { background: var(--bg-tertiary); }
 .conversation-item.active { background: var(--bg-secondary); }
+.conversation-item.removing {
+    cursor: default;
+    pointer-events: none;
+    animation: conversation-remove var(--duration-slow) var(--ease-out-expo) forwards;
+}
+@keyframes conversation-remove {
+    to {
+        opacity: 0;
+        transform: translateX(-10px) scale(0.98);
+        height: 0;
+        margin-bottom: 0;
+        padding-top: 0;
+        padding-bottom: 0;
+    }
+}
 .conversation-title {
     flex-grow: 1;
     min-width: 0;
@@ -61,11 +97,29 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Ar
    ========================================================================== */
 .main-container { flex-grow: 1; display: flex; flex-direction: column; height: 100%; width: 100%; min-width: 0; overflow: hidden; }
 .header { height: 5.6rem; min-height: 5.6rem; background: var(--bg-secondary); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 1.2rem; gap: 1rem; flex-shrink: 0; position: relative; z-index: 10; }
+.chat-navbar {
+    background: rgba(13, 17, 23, 0.72);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
 .menu-btn { padding: 0.8rem; background: none; border: none; color: var(--text-primary); cursor: pointer; border-radius: 0.6rem; display: flex; align-items: center; justify-content: center; min-width: 4.4rem; min-height: 4.4rem; transition: background var(--duration-fast), transform var(--duration-fast); }
 .menu-btn:hover { background: var(--bg-tertiary); transform: scale(1.05); }
 .menu-btn:active { transform: scale(0.98); }
 .menu-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.header h1 { font-size: 1.8rem; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-brand {
+    font-size: 1.8rem;
+    font-weight: 700;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-decoration: none;
+    color: var(--text-primary);
+    transition: opacity var(--duration-fast);
+}
+.chat-brand:hover { opacity: 0.92; }
+.chat-brand span { color: var(--brand-primary); }
 .logout-btn { margin-left: auto; flex-shrink: 0; text-decoration: none; transition: opacity var(--duration-fast); padding: 0.6rem 1rem; font-size: 1.3rem; }
 .logout-btn:hover { opacity: 0.9; }
 .logout-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

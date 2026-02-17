@@ -1,10 +1,16 @@
 from pymongo import MongoClient
+from pymongo.read_preferences import ReadPreference
+from pymongo.errors import ServerSelectionTimeoutError
 from datetime import datetime
 import os
 import sys
 import subprocess
 import re
 import urllib.parse
+import json
+import time
+import secrets
+import socket
 from bson.objectid import ObjectId
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -12,6 +18,105 @@ if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
 from config import Config  # Asumo que tienes tu URI de Mongo en config.py
+
+
+def _debug_log(location, message, data=None, runId="pre-fix", hypothesisId=None):
+    """
+    Debug NDJSON logger for Cursor debug mode.
+    IMPORTANT: never log secrets (passwords, tokens, full URIs with creds).
+    """
+    try:
+        payload = {
+            "id": f"log_{int(time.time() * 1000)}_{secrets.token_hex(4)}",
+            "timestamp": int(time.time() * 1000),
+            "location": location,
+            "message": message,
+            "data": data or {},
+            "runId": runId,
+        }
+        if hypothesisId:
+            payload["hypothesisId"] = hypothesisId
+        log_path = os.path.join(ROOT_DIR, ".cursor", "debug.log")
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        # Never fail app due to logging
+        pass
+
+
+def _redact_mongo_uri(uri: str) -> str:
+    """Return uri without credentials; keep hosts + db + query keys only."""
+    try:
+        if not uri:
+            return ""
+        parsed = urllib.parse.urlparse(uri)
+        netloc = parsed.netloc
+        if "@" in netloc:
+            _, host = netloc.rsplit("@", 1)
+        else:
+            host = netloc
+        # keep query keys only (values can contain sensitive info)
+        q = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+        keys = sorted(q.keys())
+        safe_q = "&".join([f"{k}=*" for k in keys])
+        path = parsed.path or ""
+        return urllib.parse.urlunparse((parsed.scheme, host, path, "", safe_q, ""))
+    except Exception:
+        return "<unparseable_mongo_uri>"
+
+
+def _mongo_uri_query_keys(uri: str):
+    try:
+        parsed = urllib.parse.urlparse(uri or "")
+        q = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+        return sorted(q.keys())
+    except Exception:
+        return []
+
+
+def _mongo_uri_query_flag(uri: str, key: str):
+    try:
+        parsed = urllib.parse.urlparse(uri or "")
+        q = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+        if key not in q:
+            return None
+        vals = q.get(key) or []
+        return vals[-1] if vals else ""
+    except Exception:
+        return None
+
+
+def _tcp_reachability(host: str, port: int, timeout_s: float = 3.0):
+    try:
+        start = time.time()
+        with socket.create_connection((host, port), timeout=timeout_s):
+            pass
+        return {"ok": True, "ms": int((time.time() - start) * 1000)}
+    except Exception as e:
+        return {"ok": False, "error_type": type(e).__name__, "error": str(e)}
+
+
+def _extract_seed_hosts(uri: str):
+    """Return list of hostnames from mongodb:// seedlist netloc."""
+    try:
+        parsed = urllib.parse.urlparse(uri or "")
+        if parsed.scheme != "mongodb":
+            return []
+        netloc = parsed.netloc
+        if "@" in netloc:
+            _, netloc = netloc.rsplit("@", 1)
+        hosts = []
+        for part in netloc.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            host = part.split(":")[0].strip("[]")
+            if host:
+                hosts.append(host)
+        return hosts
+    except Exception:
+        return []
 
 
 def _resolve_mongodb_srv_via_nslookup(uri):
@@ -73,17 +178,56 @@ class ChatDatabase:
             if not (uri.startswith('mongodb://') or uri.startswith('mongodb+srv://')):
                 raise ValueError(f"URI inválida: debe comenzar con 'mongodb://' o 'mongodb+srv://' (revisa que MONGODB_URI esté bien en Environment de Render).")
             last_error = None
+            # #region agent log
+            _debug_log(
+                location="model/database.py:ChatDatabase.__init__",
+                message="Mongo init start",
+                data={
+                    "uri_redacted": _redact_mongo_uri(uri),
+                    "query_keys": _mongo_uri_query_keys(uri),
+                    "directConnection": _mongo_uri_query_flag(uri, "directConnection"),
+                    "readPreference": _mongo_uri_query_flag(uri, "readPreference"),
+                    "replicaSet": _mongo_uri_query_flag(uri, "replicaSet"),
+                    "db_name": Config.MONGODB_DB_NAME,
+                },
+                runId="pre-fix",
+                hypothesisId="A",
+            )
+            # #endregion
             # Opciones para entornos cloud (Render, etc.): timeouts más altos
             client_options = {
                 "serverSelectionTimeoutMS": 30000,
                 "connectTimeoutMS": 20000,
                 "socketTimeoutMS": 20000,
                 "retryWrites": True,
+                # Evidence-based: primary is unreachable; allow reads from secondaries
+                "read_preference": ReadPreference.SECONDARY_PREFERRED,
             }
-            for attempt_uri in [uri, _resolve_mongodb_srv_via_nslookup(uri)]:
+            # Evidence-based ordering:
+            # - mongodb+srv DNS is timing out in this environment, so try nslookup seedlist first
+            parsed_uri = urllib.parse.urlparse(uri)
+            fallback_uri = _resolve_mongodb_srv_via_nslookup(uri) if parsed_uri.scheme == "mongodb+srv" else None
+            attempt_uris = [u for u in [fallback_uri, uri] if u] if parsed_uri.scheme == "mongodb+srv" else [uri]
+            for attempt_uri in attempt_uris:
                 if not attempt_uri:
                     continue
                 try:
+                    # #region agent log
+                    _debug_log(
+                        location="model/database.py:ChatDatabase.__init__",
+                        message="Mongo attempt connect",
+                        data={
+                            "attempt_uri_redacted": _redact_mongo_uri(attempt_uri),
+                            "attempt_query_keys": _mongo_uri_query_keys(attempt_uri),
+                            "attempt_directConnection": _mongo_uri_query_flag(attempt_uri, "directConnection"),
+                            "attempt_readPreference": _mongo_uri_query_flag(attempt_uri, "readPreference"),
+                            "attempt_replicaSet": _mongo_uri_query_flag(attempt_uri, "replicaSet"),
+                            "used_fallback": attempt_uri != uri,
+                        },
+                        runId="pre-fix",
+                        hypothesisId="C",
+                    )
+                    # #endregion
                     self.client = MongoClient(
                         attempt_uri,
                         **client_options
@@ -93,6 +237,58 @@ class ChatDatabase:
                     self.messages = self.db['messages']
                     self.users = self.db['users']
                     self.projects = self.db['projects']
+                    try:
+                        # Use secondaryPreferred so we can still learn topology without a primary
+                        hello = self.client.admin.with_options(read_preference=ReadPreference.SECONDARY_PREFERRED).command("hello")
+                    except Exception as _hello_err:
+                        hello = {"error": str(_hello_err)}
+                    # #region agent log
+                    _debug_log(
+                        location="model/database.py:ChatDatabase.__init__",
+                        message="Mongo connected; hello/topology snapshot",
+                        data={
+                            "uri_redacted": _redact_mongo_uri(attempt_uri),
+                            "read_preference": "SECONDARY_PREFERRED",
+                            "hello_keys": sorted(list(hello.keys())) if isinstance(hello, dict) else [],
+                            "isWritablePrimary": hello.get("isWritablePrimary") if isinstance(hello, dict) else None,
+                            "primary": hello.get("primary") if isinstance(hello, dict) else None,
+                            "setName": hello.get("setName") if isinstance(hello, dict) else None,
+                            "topology": str(getattr(self.client, "topology_description", "")),
+                        },
+                        runId="pre-fix",
+                        hypothesisId="B",
+                    )
+                    # #endregion
+                    # #region agent log
+                    seed_hosts = _extract_seed_hosts(attempt_uri)
+                    if seed_hosts:
+                        checks = {h: _tcp_reachability(h, 27017, timeout_s=3.0) for h in seed_hosts[:5]}
+                    else:
+                        checks = {}
+                    _debug_log(
+                        location="model/database.py:ChatDatabase.__init__",
+                        message="Mongo seed host TCP reachability",
+                        data={
+                            "seed_hosts": seed_hosts,
+                            "checks": checks,
+                        },
+                        runId="pre-fix",
+                        hypothesisId="E",
+                    )
+                    # #endregion
+                    self.has_primary = self._has_primary()
+                    # #region agent log
+                    _debug_log(
+                        location="model/database.py:ChatDatabase.__init__",
+                        message="Mongo writable/primary check",
+                        data={
+                            "has_primary": bool(self.has_primary),
+                            "topology": str(getattr(self.client, "topology_description", "")),
+                        },
+                        runId="pre-fix",
+                        hypothesisId="B",
+                    )
+                    # #endregion
                     self._ensure_indexes()
                     if attempt_uri != uri:
                         print("Conexión exitosa a MongoDB (via resolución nslookup)")
@@ -101,6 +297,19 @@ class ChatDatabase:
                     return
                 except Exception as e:
                     last_error = e
+                    # #region agent log
+                    _debug_log(
+                        location="model/database.py:ChatDatabase.__init__",
+                        message="Mongo connect attempt failed",
+                        data={
+                            "attempt_uri_redacted": _redact_mongo_uri(attempt_uri),
+                            "error_type": type(e).__name__,
+                            "error": str(e),
+                        },
+                        runId="pre-fix",
+                        hypothesisId="C",
+                    )
+                    # #endregion
                     if "resolution lifetime" in str(e).lower() or "dns" in str(e).lower():
                         continue
                     break
@@ -109,15 +318,64 @@ class ChatDatabase:
             print(f"Error al conectar con MongoDB: {e}")
             self.client = None
 
+    def _has_primary(self) -> bool:
+        """Best-effort: detect if a primary is reachable from this client."""
+        try:
+            td = getattr(self.client, "topology_description", None)
+            if not td:
+                return False
+            sds = None
+            if hasattr(td, "server_descriptions"):
+                try:
+                    sds = td.server_descriptions()
+                except TypeError:
+                    # some versions expose a property-like access
+                    sds = td.server_descriptions
+            if isinstance(sds, dict):
+                for _addr, sd in sds.items():
+                    name = getattr(sd, "server_type_name", None) or ""
+                    if name == "RSPrimary":
+                        return True
+            # fallback to string match
+            return "RSPrimary" in str(td)
+        except Exception:
+            return False
+
     def _ensure_indexes(self):
         """Crea índices para consultas frecuentes (idempotente)."""
         try:
+            if not getattr(self, "has_primary", False):
+                # #region agent log
+                _debug_log(
+                    location="model/database.py:ChatDatabase._ensure_indexes",
+                    message="Skipping index creation (no reachable primary)",
+                    data={
+                        "topology": str(getattr(self.client, "topology_description", "")) if getattr(self, "client", None) else None
+                    },
+                    runId="pre-fix",
+                    hypothesisId="B",
+                )
+                # #endregion
+                return
             self.users.create_index('email')
             self.conversations.create_index([('user_id', 1), ('updated_at', -1)])
             self.messages.create_index([('conversation_id', 1), ('timestamp', 1)])
             self.projects.create_index('created_at')
         except Exception as e:
             print(f"Error al crear índices: {e}")
+            # #region agent log
+            _debug_log(
+                location="model/database.py:ChatDatabase._ensure_indexes",
+                message="Mongo index creation failed",
+                data={
+                    "error_type": type(e).__name__,
+                    "error": str(e),
+                    "topology": str(getattr(self.client, "topology_description", "")) if getattr(self, "client", None) else None,
+                },
+                runId="pre-fix",
+                hypothesisId="B",
+            )
+            # #endregion
 
     def _ensure_connection(self):
         if not self.client:
@@ -144,7 +402,37 @@ class ChatDatabase:
         """Busca un usuario por su email."""
         if not self._ensure_connection():
             return None
-        return self.users.find_one({'email': email.lower()})
+        try:
+            return self.users.find_one({'email': email.lower()})
+        except ServerSelectionTimeoutError as e:
+            # #region agent log
+            _debug_log(
+                location="model/database.py:ChatDatabase.get_user_by_email",
+                message="Mongo read failed (get_user_by_email)",
+                data={
+                    "error_type": type(e).__name__,
+                    "error": str(e),
+                    "topology": str(getattr(self.client, "topology_description", "")),
+                },
+                runId="pre-fix",
+                hypothesisId="B",
+            )
+            # #endregion
+            return None
+        except Exception as e:
+            # #region agent log
+            _debug_log(
+                location="model/database.py:ChatDatabase.get_user_by_email",
+                message="Mongo read failed (unexpected)",
+                data={
+                    "error_type": type(e).__name__,
+                    "error": str(e),
+                },
+                runId="pre-fix",
+                hypothesisId="B",
+            )
+            # #endregion
+            return None
 
     def get_user_by_google_id(self, google_id):
         """Busca un usuario por su ID de Google (OAuth)."""
@@ -330,4 +618,17 @@ class ChatDatabase:
             return projects
         except Exception as e:
             print(f"Error al obtener proyectos: {e}")
+            # #region agent log
+            _debug_log(
+                location="model/database.py:ChatDatabase.get_all_projects",
+                message="Mongo read failed (get_all_projects)",
+                data={
+                    "error_type": type(e).__name__,
+                    "error": str(e),
+                    "topology": str(getattr(self.client, "topology_description", "")) if getattr(self, "client", None) else None,
+                },
+                runId="pre-fix",
+                hypothesisId="B",
+            )
+            # #endregion
             return []

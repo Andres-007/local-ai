@@ -120,7 +120,12 @@ def login():
     if not db._ensure_connection():
         return jsonify({"error": "Servicio no disponible. Intenta más tarde."}), 503
 
-    user = db.get_user_by_email(email)
+    try:
+        user = db.get_user_by_email(email)
+    except Exception as e:
+        # Fallback safety: never crash login on DB selection errors
+        print(f"Error en login (DB): {e}")
+        return jsonify({"error": "Servicio no disponible. Intenta más tarde."}), 503
 
     if not user or not user.get('password'):
         return jsonify({"error": "Credenciales inválidas"}), 401
