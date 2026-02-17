@@ -114,7 +114,8 @@ body.modal-open { overflow: hidden; height: 100%; position: fixed; width: 100%; 
 
 /* --- SECCIÓN CAPACIDADES --- */
 #capabilities { padding: 60px 0; background: linear-gradient(180deg, #0f0f1a 0%, #12102a 50%, #0f0f1a 100%); }
-#capabilities .section-title { 
+#capabilities .section-title,
+#projects .section-title { 
     text-align: center; 
     font-size: clamp(1.5rem, 4vw, 2.5rem); 
     font-weight: 700; 
@@ -124,7 +125,8 @@ body.modal-open { overflow: hidden; height: 100%; position: fixed; width: 100%; 
     text-shadow: 0 0 12px rgba(142, 45, 226, 0.3), 0 0 24px rgba(74, 0, 224, 0.15);
     transition: text-shadow var(--duration-normal) var(--ease-out);
 }
-#capabilities .section-title:hover { text-shadow: 0 0 16px rgba(142, 45, 226, 0.5), 0 0 32px rgba(74, 0, 224, 0.25); }
+#capabilities .section-title:hover,
+#projects .section-title:hover { text-shadow: 0 0 16px rgba(142, 45, 226, 0.5), 0 0 32px rgba(74, 0, 224, 0.25); }
 .capabilities-grid { display: grid; grid-template-columns: 1fr; gap: 1.5rem; }
 @media (min-width: 480px) {
     .capabilities-grid { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.5rem; }
