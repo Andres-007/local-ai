@@ -7,11 +7,42 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 import secrets
 import os
+import json
+import time
+from urllib.parse import urlparse
 from bson.objectid import ObjectId
 from bson.errors import InvalidId
 
 app = Flask(__name__, template_folder='web/templates', static_folder='web/static')
 app.secret_key = os.getenv('SECRET_KEY', secrets.token_hex(16))
+
+# region agent log
+_DEBUG_LOG_PATH = os.path.join(os.path.dirname(__file__), ".cursor", "debug.log")
+
+
+def _debug_log_app(location, message, data=None, runId="debug", hypothesisId=None):
+    """
+    NDJSON logger for debug mode.
+    IMPORTANT: never log secrets (passwords, tokens, full URIs with creds).
+    """
+    try:
+        payload = {
+            "id": f"log_{int(time.time() * 1000)}_{secrets.token_hex(4)}",
+            "timestamp": int(time.time() * 1000),
+            "location": location,
+            "message": message,
+            "data": data or {},
+            "runId": runId,
+        }
+        if hypothesisId:
+            payload["hypothesisId"] = hypothesisId
+        os.makedirs(os.path.dirname(_DEBUG_LOG_PATH), exist_ok=True)
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        # Never fail app due to logging
+        pass
+# endregion
 
 # OAuth Google (opcional: requiere GOOGLE_CLIENT_ID y GOOGLE_CLIENT_SECRET en .env)
 oauth = OAuth(app)
@@ -185,7 +216,47 @@ def auth_google():
     """Redirige a Google para iniciar sesión con OAuth."""
     if not google_client_id or not google_client_secret:
         return redirect(url_for('index') + '?error=google_not_configured')
-    return oauth.google.authorize_redirect(url_for('auth_google_callback', _external=True))
+    # Allow overriding redirect URI to match Google Console config (local/prod).
+    # Do NOT include secrets here.
+    env_redirect_uri = (os.getenv("GOOGLE_REDIRECT_URI") or "").strip()
+    env_base_url = (os.getenv("PUBLIC_BASE_URL") or "").strip()
+    if env_redirect_uri:
+        redirect_uri = env_redirect_uri
+        redirect_source = "GOOGLE_REDIRECT_URI"
+    elif env_base_url:
+        redirect_uri = env_base_url.rstrip("/") + url_for("auth_google_callback")
+        redirect_source = "PUBLIC_BASE_URL"
+    else:
+        redirect_uri = url_for('auth_google_callback', _external=True)
+        redirect_source = "url_for(_external=True)"
+
+    # sanitize for logs
+    try:
+        p = urlparse(redirect_uri)
+        redirect_uri_safe = f"{p.scheme}://{p.netloc}{p.path}"
+    except Exception:
+        redirect_uri_safe = "<unparseable>"
+    # region agent log
+    _debug_log_app(
+        location="app.py:auth_google",
+        message="Google OAuth authorize_redirect",
+        data={
+            "has_google_client_id": bool(google_client_id),
+            "has_google_client_secret": bool(google_client_secret),
+            "redirect_uri": redirect_uri_safe,
+            "redirect_source": redirect_source,
+            "scheme": getattr(request, "scheme", None),
+            "host": getattr(request, "host", None),
+            "host_url": getattr(request, "host_url", None),
+            "url_root": getattr(request, "url_root", None),
+            "x_forwarded_proto": request.headers.get("X-Forwarded-Proto"),
+            "x_forwarded_host": request.headers.get("X-Forwarded-Host"),
+        },
+        runId="debug1",
+        hypothesisId="A",
+    )
+    # endregion
+    return oauth.google.authorize_redirect(redirect_uri)
 
 
 @app.route('/auth/google/callback')
@@ -193,6 +264,24 @@ def auth_google_callback():
     """Callback de Google OAuth: crea o obtiene usuario y deja sesión iniciada."""
     if not google_client_id or not google_client_secret:
         return redirect(url_for('index'))
+    # region agent log
+    _debug_log_app(
+        location="app.py:auth_google_callback",
+        message="Google OAuth callback hit",
+        data={
+            "args_keys": sorted(list(request.args.keys())),
+            "error": request.args.get("error"),
+            "scheme": getattr(request, "scheme", None),
+            "host": getattr(request, "host", None),
+            "host_url": getattr(request, "host_url", None),
+            "url_root": getattr(request, "url_root", None),
+            "x_forwarded_proto": request.headers.get("X-Forwarded-Proto"),
+            "x_forwarded_host": request.headers.get("X-Forwarded-Host"),
+        },
+        runId="debug1",
+        hypothesisId="D",
+    )
+    # endregion
     try:
         token = oauth.google.authorize_access_token()
         user_info = token.get('userinfo') or {}
