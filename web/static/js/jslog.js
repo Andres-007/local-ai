@@ -3,7 +3,15 @@ document.addEventListener('DOMContentLoaded', function() {
     const authModal = document.getElementById('authModal');
     const authBtn = document.getElementById('authBtn');
     const closeModalBtn = document.getElementById('closeModalBtn');
+    const authTabs = document.querySelectorAll('#authModal .modal-tab');
+    const authFormContainers = document.querySelectorAll('#authModal .form-container');
     const errorMessage = document.getElementById('errorMessage');
+    const forgotPasswordLink = document.getElementById('forgotPasswordLink');
+    const forgotPasswordModal = document.getElementById('forgotPasswordModal');
+    const closeForgotModalBtn = document.getElementById('closeForgotModalBtn');
+    const forgotPasswordForm = document.getElementById('forgotPasswordForm');
+    const forgotErrorMessage = document.getElementById('forgotErrorMessage');
+    const forgotSuccessMessage = document.getElementById('forgotSuccessMessage');
 
     const projectDetailsModal = document.getElementById('projectDetailsModal');
     const closeProjectModalBtn = document.getElementById('closeProjectModalBtn');
@@ -59,13 +67,66 @@ document.addEventListener('DOMContentLoaded', function() {
         }, { passive: false });
     });
 
-    // --- Event Listeners para Modal de Auth (solo GitHub) ---
+    // --- Event Listeners para Modal de Auth ---
     authBtn.addEventListener('click', () => {
-        errorMessage.style.display = 'none';
+        switchAuthTab('login');
         openModal('authModal');
     });
     closeModalBtn.addEventListener('click', () => closeModal('authModal'));
     authModal.addEventListener('click', (e) => e.target === authModal && closeModal('authModal'));
+
+    // --- Olvidé mi contraseña ---
+    forgotPasswordLink.addEventListener('click', (e) => {
+        e.preventDefault();
+        closeModal('authModal');
+        forgotErrorMessage.style.display = 'none';
+        forgotSuccessMessage.style.display = 'none';
+        document.getElementById('forgotEmail').value = '';
+        openModal('forgotPasswordModal');
+    });
+    closeForgotModalBtn.addEventListener('click', () => closeModal('forgotPasswordModal'));
+    forgotPasswordModal.addEventListener('click', (e) => e.target === forgotPasswordModal && closeModal('forgotPasswordModal'));
+    forgotPasswordForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        forgotErrorMessage.style.display = 'none';
+        forgotSuccessMessage.style.display = 'none';
+        const email = document.getElementById('forgotEmail').value.trim();
+        try {
+            const res = await fetch('/forgot-password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email })
+            });
+            const data = await res.json();
+            if (res.ok) {
+                forgotSuccessMessage.textContent = data.message || 'Si existe una cuenta con ese email, recibirás un enlace para restablecer tu contraseña.';
+                forgotSuccessMessage.style.display = 'block';
+                forgotPasswordForm.reset();
+            } else {
+                forgotErrorMessage.textContent = data.error || 'Error al enviar. Intenta de nuevo.';
+                forgotErrorMessage.style.display = 'block';
+            }
+        } catch (err) {
+            forgotErrorMessage.textContent = 'Error de conexión. Intenta de nuevo.';
+            forgotErrorMessage.style.display = 'block';
+        }
+    });
+
+    authTabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+            switchAuthTab(tab.getAttribute('data-tab'));
+        });
+    });
+
+    function switchAuthTab(activeTab) {
+        authTabs.forEach(t => {
+            t.classList.toggle('active', t.getAttribute('data-tab') === activeTab);
+        });
+        authFormContainers.forEach(c => {
+            c.classList.toggle('active', c.getAttribute('data-tab') === activeTab);
+        });
+        errorMessage.style.display = 'none';
+    }
 
     // --- Event Listeners para Modal de Proyecto ---
     closeProjectModalBtn.addEventListener('click', () => closeModal('projectDetailsModal'));
@@ -282,15 +343,66 @@ document.addEventListener('DOMContentLoaded', function() {
     
     fetchProjectsFromDB();
 
+    // --- Lógica de Formularios (Login/Registro) ---
+    const showError = (message) => {
+        errorMessage.textContent = message;
+        errorMessage.style.display = 'block';
+    };
+
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        errorMessage.style.display = 'none';
+        const email = document.getElementById('loginEmail').value;
+        const password = document.getElementById('loginPassword').value;
+        try {
+            const res = await fetch('/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password })
+            });
+            const data = await res.json();
+            if (res.ok) {
+                window.location.href = '/chat';
+            } else {
+                showError(data.error || 'Error desconocido.');
+            }
+        } catch (err) { showError('Error de conexión con el servidor.'); }
+    });
+
+    document.getElementById('registerForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        errorMessage.style.display = 'none';
+        const email = document.getElementById('registerEmail').value;
+        const password = document.getElementById('registerPassword').value;
+        const confirm = document.getElementById('registerConfirmPassword').value;
+        if (password !== confirm) {
+            showError('Las contraseñas no coinciden.');
+            return;
+        }
+        try {
+            const res = await fetch('/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password })
+            });
+            const data = await res.json();
+            if (res.ok) {
+                window.location.href = '/chat';
+            } else {
+                showError(data.error || 'Error desconocido.');
+            }
+        } catch (err) { showError('Error de conexión con el servidor.'); }
+    });
+
     // --- Mostrar error en URL (ej. ?error=oauth_failed) ---
     const urlParams = new URLSearchParams(window.location.search);
     const urlError = urlParams.get('error');
     if (urlError) {
         const messages = {
-            github_not_configured: 'Inicio con GitHub no está configurado. Contacta al administrador.',
-            oauth_failed: 'Error al iniciar sesión con GitHub. Intenta de nuevo.',
+            github_not_configured: 'Inicio con GitHub no está configurado. Usa email y contraseña.',
+            oauth_failed: 'Error al iniciar sesión con GitHub. Intenta de nuevo o usa email.',
             invalid_github_user: 'No se pudo obtener tu información de GitHub.',
-            github_email_required: 'Tu cuenta de GitHub debe tener un email visible. Configúralo en GitHub.',
+            github_email_required: 'Tu cuenta de GitHub debe tener un email visible. Configúralo en GitHub o usa email.',
             service_unavailable: 'Servicio no disponible. Intenta más tarde.',
             create_failed: 'No se pudo crear la cuenta. Intenta más tarde.'
         };
