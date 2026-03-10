@@ -1,4 +1,4 @@
-## WebDevAI (Local AI) — Flask + Gemini + MongoDB
+## WebDevAI — Flask + Gemini + MongoDB
 
 Aplicación web full‑stack que combina:
 
