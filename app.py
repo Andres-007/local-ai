@@ -44,17 +44,19 @@ def _debug_log_app(location, message, data=None, runId="debug", hypothesisId=Non
         pass
 # endregion
 
-# OAuth Google (opcional: requiere GOOGLE_CLIENT_ID y GOOGLE_CLIENT_SECRET en .env)
+# OAuth GitHub (opcional: requiere GITHUB_CLIENT_ID y GITHUB_CLIENT_SECRET en .env)
 oauth = OAuth(app)
-google_client_id = os.getenv('GOOGLE_CLIENT_ID', '').strip()
-google_client_secret = os.getenv('GOOGLE_CLIENT_SECRET', '').strip()
-if google_client_id and google_client_secret:
+github_client_id = os.getenv('GITHUB_CLIENT_ID', '').strip()
+github_client_secret = os.getenv('GITHUB_CLIENT_SECRET', '').strip()
+if github_client_id and github_client_secret:
     oauth.register(
-        name='google',
-        client_id=google_client_id,
-        client_secret=google_client_secret,
-        server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
-        client_kwargs={'scope': 'openid email profile'}
+        name='github',
+        client_id=github_client_id,
+        client_secret=github_client_secret,
+        access_token_url='https://github.com/login/oauth/access_token',
+        authorize_url='https://github.com/login/oauth/authorize',
+        api_base_url='https://api.github.com/',
+        client_kwargs={'scope': 'read:user user:email'}
     )
 
 # Configuración de CORS más específica si es necesario, pero esto funciona para desarrollo
@@ -211,95 +213,94 @@ def forgot_password():
     }), 200
 
 
-@app.route('/auth/google')
-def auth_google():
-    """Redirige a Google para iniciar sesión con OAuth."""
-    if not google_client_id or not google_client_secret:
-        return redirect(url_for('index') + '?error=google_not_configured')
-    # Allow overriding redirect URI to match Google Console config (local/prod).
-    # Do NOT include secrets here.
-    env_redirect_uri = (os.getenv("GOOGLE_REDIRECT_URI") or "").strip()
+@app.route('/auth/github')
+def auth_github():
+    """Redirige a GitHub para iniciar sesión con OAuth."""
+    if not github_client_id or not github_client_secret:
+        return redirect(url_for('index') + '?error=github_not_configured')
+    # Allow overriding redirect URI to match GitHub OAuth App config (local/prod).
+    env_redirect_uri = (os.getenv("GITHUB_REDIRECT_URI") or "").strip()
     env_base_url = (os.getenv("PUBLIC_BASE_URL") or "").strip()
     if env_redirect_uri:
         redirect_uri = env_redirect_uri
-        redirect_source = "GOOGLE_REDIRECT_URI"
+        redirect_source = "GITHUB_REDIRECT_URI"
     elif env_base_url:
-        redirect_uri = env_base_url.rstrip("/") + url_for("auth_google_callback")
+        redirect_uri = env_base_url.rstrip("/") + url_for("auth_github_callback")
         redirect_source = "PUBLIC_BASE_URL"
     else:
-        redirect_uri = url_for('auth_google_callback', _external=True)
+        redirect_uri = url_for('auth_github_callback', _external=True)
         redirect_source = "url_for(_external=True)"
 
-    # sanitize for logs
     try:
         p = urlparse(redirect_uri)
         redirect_uri_safe = f"{p.scheme}://{p.netloc}{p.path}"
     except Exception:
         redirect_uri_safe = "<unparseable>"
-    # region agent log
     _debug_log_app(
-        location="app.py:auth_google",
-        message="Google OAuth authorize_redirect",
+        location="app.py:auth_github",
+        message="GitHub OAuth authorize_redirect",
         data={
-            "has_google_client_id": bool(google_client_id),
-            "has_google_client_secret": bool(google_client_secret),
+            "has_github_client_id": bool(github_client_id),
+            "has_github_client_secret": bool(github_client_secret),
             "redirect_uri": redirect_uri_safe,
             "redirect_source": redirect_source,
-            "scheme": getattr(request, "scheme", None),
-            "host": getattr(request, "host", None),
-            "host_url": getattr(request, "host_url", None),
-            "url_root": getattr(request, "url_root", None),
-            "x_forwarded_proto": request.headers.get("X-Forwarded-Proto"),
-            "x_forwarded_host": request.headers.get("X-Forwarded-Host"),
         },
         runId="debug1",
         hypothesisId="A",
     )
-    # endregion
-    return oauth.google.authorize_redirect(redirect_uri)
+    return oauth.github.authorize_redirect(redirect_uri)
 
 
-@app.route('/auth/google/callback')
-def auth_google_callback():
-    """Callback de Google OAuth: crea o obtiene usuario y deja sesión iniciada."""
-    if not google_client_id or not google_client_secret:
+@app.route('/auth/github/callback')
+def auth_github_callback():
+    """Callback de GitHub OAuth: crea o obtiene usuario y deja sesión iniciada."""
+    if not github_client_id or not github_client_secret:
         return redirect(url_for('index'))
-    # region agent log
     _debug_log_app(
-        location="app.py:auth_google_callback",
-        message="Google OAuth callback hit",
+        location="app.py:auth_github_callback",
+        message="GitHub OAuth callback hit",
         data={
             "args_keys": sorted(list(request.args.keys())),
             "error": request.args.get("error"),
-            "scheme": getattr(request, "scheme", None),
-            "host": getattr(request, "host", None),
-            "host_url": getattr(request, "host_url", None),
-            "url_root": getattr(request, "url_root", None),
-            "x_forwarded_proto": request.headers.get("X-Forwarded-Proto"),
-            "x_forwarded_host": request.headers.get("X-Forwarded-Host"),
         },
         runId="debug1",
         hypothesisId="D",
     )
-    # endregion
     try:
-        token = oauth.google.authorize_access_token()
-        user_info = token.get('userinfo') or {}
+        token = oauth.github.authorize_access_token()
+        # GitHub no devuelve userinfo en el token; hay que pedirlo a la API
+        resp = oauth.github.get('/user', token=token)
+        user_info = resp.json() if resp else {}
+        github_id = str(user_info.get('id', ''))
+        name = user_info.get('name') or user_info.get('login') or ''
         email = (user_info.get('email') or '').strip().lower()
-        google_id = user_info.get('sub')
-        name = user_info.get('name') or ''
-        if not email or not google_id:
-            return redirect(url_for('index') + '?error=invalid_google_user')
+        # Si el email no está público, pedirlo al endpoint de emails
+        if not email:
+            try:
+                emails_resp = oauth.github.get('/user/emails', token=token)
+                if emails_resp:
+                    for e in (emails_resp.json() or []):
+                        if e.get('primary') and e.get('verified'):
+                            email = (e.get('email') or '').strip().lower()
+                            break
+                        if not email and e.get('verified'):
+                            email = (e.get('email') or '').strip().lower()
+            except Exception:
+                pass
+        if not github_id:
+            return redirect(url_for('index') + '?error=invalid_github_user')
+        if not email:
+            return redirect(url_for('index') + '?error=github_email_required')
         if not db._ensure_connection():
             return redirect(url_for('index') + '?error=service_unavailable')
-        user = db.get_user_by_google_id(google_id)
+        user = db.get_user_by_github_id(github_id)
         if not user:
             user = db.get_user_by_email(email)
             if user:
-                db.link_google_to_user(str(user['_id']), google_id, name)
+                db.link_github_to_user(str(user['_id']), github_id, name)
                 user_id = str(user['_id'])
             else:
-                user_id = db.create_google_user(email, google_id, name)
+                user_id = db.create_github_user(email, github_id, name)
                 if not user_id:
                     return redirect(url_for('index') + '?error=create_failed')
         else:
@@ -308,7 +309,7 @@ def auth_google_callback():
         session['user_email'] = email
         return redirect(url_for('chat'))
     except Exception as e:
-        print(f"Google OAuth error: {e}")
+        print(f"GitHub OAuth error: {e}")
         return redirect(url_for('index') + '?error=oauth_failed')
 
 

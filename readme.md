@@ -203,12 +203,12 @@ Esto hace *upsert* por `title` para evitar duplicados y deja los proyectos listo
 - **GET `/api/check_auth`**
   - Devuelve `{ authenticated: true/false, email?: string }`
 
-### Google OAuth (opcional)
+### GitHub OAuth (opcional)
 
-- **GET `/auth/google`**
-- **GET `/auth/google/callback`**
+- **GET `/auth/github`**
+- **GET `/auth/github/callback`**
 
-Requiere `GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET`.
+Requiere `GITHUB_CLIENT_ID` y `GITHUB_CLIENT_SECRET`. Añade en GitHub OAuth App la URL de callback indicada abajo.
 
 ### Proyectos (landing)
 

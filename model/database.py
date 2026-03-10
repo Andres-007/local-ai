@@ -467,6 +467,39 @@ class ChatDatabase:
         except Exception:
             return False
 
+    def get_user_by_github_id(self, github_id):
+        """Busca un usuario por su ID de GitHub (OAuth)."""
+        if not self._ensure_connection():
+            return None
+        return self.users.find_one({'github_id': github_id})
+
+    def create_github_user(self, email, github_id, name=None):
+        """Crea un usuario vinculado a GitHub (sin contraseña local)."""
+        if not self._ensure_connection():
+            return None
+        user_data = {
+            'email': email.lower(),
+            'github_id': github_id,
+            'name': name or '',
+            'password': None,
+            'created_at': datetime.utcnow()
+        }
+        result = self.users.insert_one(user_data)
+        return str(result.inserted_id)
+
+    def link_github_to_user(self, user_id, github_id, name=None):
+        """Vincula una cuenta GitHub a un usuario existente (por email)."""
+        if not self._ensure_connection():
+            return False
+        try:
+            self.users.update_one(
+                {'_id': ObjectId(user_id)},
+                {'$set': {'github_id': github_id, 'name': name or ''}}
+            )
+            return True
+        except Exception:
+            return False
+
     def get_user_by_id(self, user_id):
         """Busca un usuario por su ID."""
         if not self._ensure_connection():
