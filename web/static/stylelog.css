@@ -389,6 +389,7 @@ body.modal-open { overflow: hidden; height: 100%; position: fixed; width: 100%; 
 @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
 
 /* Auth: divisor y botón Google */
+.auth-github-text { color: var(--color-texto-secundario); font-size: 0.95rem; margin-bottom: 1.25rem; text-align: center; }
 .auth-divider { display: flex; align-items: center; gap: 1rem; margin: 1.25rem 0; }
 .auth-divider::before, .auth-divider::after { content: ''; flex: 1; height: 1px; background: #333; }
 .auth-divider span { font-size: 0.9rem; color: var(--color-texto-secundario); }
@@ -402,6 +403,7 @@ body.modal-open { overflow: hidden; height: 100%; position: fixed; width: 100%; 
 .forgot-password-link:hover { text-decoration: underline; }
 .forgot-password-text { color: var(--color-texto-secundario); font-size: 0.95rem; margin-bottom: 1.25rem; }
 .modal-container--small { max-width: min(380px, calc(100vw - 2rem)); }
+#authModal .modal-header h3,
 #forgotPasswordModal .modal-header h3 { margin: 0; font-size: 1.25rem; }
 
 /* --- MODAL DE DETALLE DE PROYECTO - SECCIÓN CORREGIDA --- */
