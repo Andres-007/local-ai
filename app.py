@@ -1,9 +1,10 @@
-from flask import Flask, render_template, request, jsonify, session, Response, redirect, url_for, send_from_directory
+from flask import Flask, render_template, request, jsonify, session, Response, redirect, url_for, send_from_directory, make_response
 from flask_cors import CORS
 from authlib.integrations.flask_client import OAuth
 from model.model import WebDevAI
 from model.database import ChatDatabase
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.middleware.proxy_fix import ProxyFix
 from functools import wraps
 import secrets
 import os
@@ -14,8 +15,43 @@ from urllib.parse import urlparse
 from bson.objectid import ObjectId
 from bson.errors import InvalidId
 
+
+def _is_trusted_proxy_hosting():
+    """Vercel, Render, etc. send X-Forwarded-*; needed for correct https URLs and OAuth redirect_uri."""
+    return (
+        os.getenv("VERCEL", "").strip() == "1"
+        or os.getenv("TRUST_PROXY", "").strip().lower() in ("1", "true", "yes")
+    )
+
+
+def _is_production_like():
+    """HTTPS-only cookies and stricter session expectations."""
+    return (
+        os.getenv("FLASK_ENV", "").strip().lower() == "production"
+        or os.getenv("VERCEL", "").strip() == "1"
+    )
+
+
 app = Flask(__name__, template_folder='web/templates', static_folder='web/static')
-app.secret_key = os.getenv('SECRET_KEY', secrets.token_hex(16))
+_secret_from_env = os.getenv("SECRET_KEY", "").strip()
+if _secret_from_env:
+    app.secret_key = _secret_from_env
+else:
+    app.secret_key = secrets.token_hex(16)
+
+# Production / Vercel: a random secret per process breaks signed session cookies (login → /chat → landing).
+if not _secret_from_env and _is_production_like():
+    raise RuntimeError(
+        "SECRET_KEY must be set when FLASK_ENV=production or on Vercel (VERCEL=1). "
+        "Without a stable value, Flask cannot verify the session on the next request, so /chat redirects back to /."
+    )
+
+if _is_trusted_proxy_hosting():
+    # So request.scheme / url_for(..., _external=True) match the browser (https://…)
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1, x_prefix=1)
+
+if _is_production_like():
+    app.config["PREFERRED_URL_SCHEME"] = "https"
 
 # region agent log
 _DEBUG_LOG_PATH = os.path.join(os.path.dirname(__file__), ".cursor", "debug.log")
@@ -63,7 +99,7 @@ if github_client_id and github_client_secret:
 # Configuración de CORS más específica si es necesario, pero esto funciona para desarrollo
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SECURE'] = os.getenv('FLASK_ENV') == 'production'
+app.config['SESSION_COOKIE_SECURE'] = _is_production_like()
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
 
 # Configuración de CORS restringida
@@ -73,6 +109,23 @@ CORS(app, origins=[o.strip() for o in allowed_origins], supports_credentials=Tru
 # Inicializar servicios
 ai_model = WebDevAI()
 db = ChatDatabase()
+
+
+def _no_store_redirect(location):
+    """Auth-related redirects must not be cached at the edge (stale 302 → wrong page after login)."""
+    r = redirect(location)
+    r.headers["Cache-Control"] = "no-store, private"
+    r.headers["Pragma"] = "no-cache"
+    return r
+
+
+@app.after_request
+def _no_store_auth_post_responses(response):
+    if request.method == "POST" and request.path in ("/login", "/register", "/forgot-password"):
+        response.headers.setdefault("Cache-Control", "no-store, private")
+        response.headers.setdefault("Pragma", "no-cache")
+    return response
+
 
 def _parse_paging_args(default_limit=50, max_limit=200):
     try:
@@ -150,7 +203,7 @@ def login_required(f):
         if 'user_id' not in session:
             if request.path.startswith('/api/'):
                 return jsonify({"error": "Autenticación requerida"}), 401
-            return redirect(url_for('index'))
+            return _no_store_redirect(url_for('index'))
         return f(*args, **kwargs)
     return decorated_function
 
@@ -167,9 +220,9 @@ def index():
     Si ya está logueado, lo redirige al chat.
     """
     if 'user_id' in session:
-        return redirect(url_for('chat'))
+        return _no_store_redirect(url_for('chat'))
     # Esta es la página que contiene el carrusel
-    return render_template('login.html') 
+    return render_template('login.html')
 
 @app.route('/chat')
 @login_required
@@ -177,7 +230,10 @@ def chat():
     """
     Ruta principal de la aplicación de chat (index.html), protegida por login.
     """
-    return render_template('index.html') # Asumo que tu chat está en index.html
+    r = make_response(render_template('index.html'))
+    r.headers['Cache-Control'] = 'no-store, private'
+    r.headers['Pragma'] = 'no-cache'
+    return r
 
 @app.route('/login', methods=['POST'])
 def login():
@@ -242,7 +298,7 @@ def register():
 @app.route('/logout')
 def logout():
     session.clear()
-    return redirect(url_for('index'))
+    return _no_store_redirect(url_for('index'))
 
 
 @app.route('/forgot-password', methods=['POST'])
@@ -258,22 +314,31 @@ def forgot_password():
     }), 200
 
 
+def _github_oauth_redirect_uri():
+    """
+    Exact callback URL sent to GitHub (authorize + token exchange must match).
+    Prefer GITHUB_REDIRECT_URI or PUBLIC_BASE_URL on Vercel so it never depends on proxy headers alone.
+    """
+    env_redirect_uri = (os.getenv("GITHUB_REDIRECT_URI") or "").strip()
+    if env_redirect_uri:
+        return env_redirect_uri
+    env_base_url = (os.getenv("PUBLIC_BASE_URL") or "").strip()
+    if env_base_url:
+        return env_base_url.rstrip("/") + "/auth/github/callback"
+    return url_for("auth_github_callback", _external=True)
+
+
 @app.route('/auth/github')
 def auth_github():
     """Redirige a GitHub para iniciar sesión con OAuth."""
     if not github_client_id or not github_client_secret:
-        return redirect(url_for('index') + '?error=github_not_configured')
-    # Allow overriding redirect URI to match GitHub OAuth App config (local/prod).
-    env_redirect_uri = (os.getenv("GITHUB_REDIRECT_URI") or "").strip()
-    env_base_url = (os.getenv("PUBLIC_BASE_URL") or "").strip()
-    if env_redirect_uri:
-        redirect_uri = env_redirect_uri
+        return _no_store_redirect(url_for('index') + '?error=github_not_configured')
+    redirect_uri = _github_oauth_redirect_uri()
+    if (os.getenv("GITHUB_REDIRECT_URI") or "").strip():
         redirect_source = "GITHUB_REDIRECT_URI"
-    elif env_base_url:
-        redirect_uri = env_base_url.rstrip("/") + url_for("auth_github_callback")
+    elif (os.getenv("PUBLIC_BASE_URL") or "").strip():
         redirect_source = "PUBLIC_BASE_URL"
     else:
-        redirect_uri = url_for('auth_github_callback', _external=True)
         redirect_source = "url_for(_external=True)"
 
     try:
@@ -300,7 +365,7 @@ def auth_github():
 def auth_github_callback():
     """Callback de GitHub OAuth: crea o obtiene usuario y deja sesión iniciada."""
     if not github_client_id or not github_client_secret:
-        return redirect(url_for('index'))
+        return _no_store_redirect(url_for('index'))
     _debug_log_app(
         location="app.py:auth_github_callback",
         message="GitHub OAuth callback hit",
@@ -312,7 +377,7 @@ def auth_github_callback():
         hypothesisId="D",
     )
     try:
-        token = oauth.github.authorize_access_token()
+        token = oauth.github.authorize_access_token(redirect_uri=_github_oauth_redirect_uri())
         # GitHub no devuelve userinfo en el token; hay que pedirlo a la API
         resp = oauth.github.get('/user', token=token)
         user_info = resp.json() if resp else {}
@@ -333,11 +398,11 @@ def auth_github_callback():
             except Exception:
                 pass
         if not github_id:
-            return redirect(url_for('index') + '?error=invalid_github_user')
+            return _no_store_redirect(url_for('index') + '?error=invalid_github_user')
         if not email:
-            return redirect(url_for('index') + '?error=github_email_required')
+            return _no_store_redirect(url_for('index') + '?error=github_email_required')
         if not db._ensure_connection():
-            return redirect(url_for('index') + '?error=service_unavailable')
+            return _no_store_redirect(url_for('index') + '?error=service_unavailable')
         user = db.get_user_by_github_id(github_id)
         if not user:
             user = db.get_user_by_email(email)
@@ -347,17 +412,17 @@ def auth_github_callback():
             else:
                 user_id = db.create_github_user(email, github_id, name)
                 if not user_id:
-                    return redirect(url_for('index') + '?error=create_failed')
+                    return _no_store_redirect(url_for('index') + '?error=create_failed')
         else:
             user_id = str(user['_id'])
         session.permanent = True
         session['user_id'] = user_id
         session['user_email'] = email
         session.modified = True
-        return redirect(url_for('chat'))
+        return _no_store_redirect(url_for('chat'))
     except Exception as e:
         print(f"GitHub OAuth error: {e}")
-        return redirect(url_for('index') + '?error=oauth_failed')
+        return _no_store_redirect(url_for('index') + '?error=oauth_failed')
 
 
 @app.route('/api/check_auth')

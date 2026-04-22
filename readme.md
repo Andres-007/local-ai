@@ -123,7 +123,7 @@ GOOGLE_CLIENT_SECRET=
 Notas:
 
 - **`MONGODB_URI`** acepta `mongodb://` o `mongodb+srv://` (Atlas).
-- **`SECRET_KEY`**: si no lo defines, la app genera uno temporal en cada arranque (no ideal en producción).
+- **`SECRET_KEY`**: si no lo defines, la app genera uno temporal en cada arranque (en **Vercel/serverless** esto rompe el login con GitHub: debes definir `SECRET_KEY` en el panel de variables).
 - **Google OAuth** solo se registra si `GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET` están presentes.
 
 Para generar un `SECRET_KEY`:
@@ -209,6 +209,23 @@ Esto hace *upsert* por `title` para evitar duplicados y deja los proyectos listo
 - **GET `/auth/github/callback`**
 
 Requiere `GITHUB_CLIENT_ID` y `GITHUB_CLIENT_SECRET`. Añade en GitHub OAuth App la URL de callback indicada abajo.
+
+**Vercel (p. ej. [https://webdevai-blue.vercel.app/](https://webdevai-blue.vercel.app/))**
+
+En **Settings → Environment Variables** define al menos:
+
+| Variable | Ejemplo |
+|----------|---------|
+| `SECRET_KEY` | **Obligatorio** en Vercel / `FLASK_ENV=production`: misma clave en todos los arranques (p. ej. `python -c "import secrets; print(secrets.token_hex(32))"`). Sin esto, la cookie de sesión no se valida entre instancias: tras login te devuelve al landing en lugar de `/chat`, y GitHub OAuth también falla. |
+| `PUBLIC_BASE_URL` | `https://webdevai-blue.vercel.app` (sin barra final) **o** |
+| `GITHUB_REDIRECT_URI` | `https://webdevai-blue.vercel.app/auth/github/callback` (debe coincidir **exactamente** con la callback en GitHub) |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | Credenciales de la OAuth App |
+
+En GitHub → **Settings → Developer settings → OAuth Apps** → tu app → **Authorization callback URL** debe ser exactamente:
+
+`https://webdevai-blue.vercel.app/auth/github/callback`
+
+La app activa `ProxyFix` cuando `VERCEL=1` para que las URLs públicas usen `https` detrás del proxy.
 
 ### Proyectos (landing)
 
