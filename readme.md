@@ -123,7 +123,11 @@ GOOGLE_CLIENT_SECRET=
 Notas:
 
 - **`MONGODB_URI`** acepta `mongodb://` o `mongodb+srv://` (Atlas).
+<<<<<<< HEAD
 - **`SECRET_KEY`**: si no lo defines, la app genera uno temporal en cada arranque (en **Vercel/serverless** esto rompe el login con GitHub: debes definir `SECRET_KEY` en el panel de variables).
+=======
+- **`SECRET_KEY`**: si no lo defines, la app genera uno temporal en cada arranque (no ideal en producción).
+>>>>>>> ea67bba717a6ece054f099e5eacb3c0140d83898
 - **Google OAuth** solo se registra si `GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET` están presentes.
 
 Para generar un `SECRET_KEY`:
@@ -210,6 +214,7 @@ Esto hace *upsert* por `title` para evitar duplicados y deja los proyectos listo
 
 Requiere `GITHUB_CLIENT_ID` y `GITHUB_CLIENT_SECRET`. Añade en GitHub OAuth App la URL de callback indicada abajo.
 
+<<<<<<< HEAD
 **Vercel (p. ej. [https://webdevai-blue.vercel.app/](https://webdevai-blue.vercel.app/))**
 
 En **Settings → Environment Variables** define al menos:
@@ -227,6 +232,8 @@ En GitHub → **Settings → Developer settings → OAuth Apps** → tu app → 
 
 La app activa `ProxyFix` cuando `VERCEL=1` para que las URLs públicas usen `https` detrás del proxy.
 
+=======
+>>>>>>> ea67bba717a6ece054f099e5eacb3c0140d83898
 ### Proyectos (landing)
 
 - **GET `/api/projects`** *(público)*

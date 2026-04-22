@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 from flask import Flask, render_template, request, jsonify, session, Response, redirect, url_for, send_from_directory, make_response
+=======
+from flask import Flask, render_template, request, jsonify, session, Response, redirect, url_for, send_from_directory
+>>>>>>> ea67bba717a6ece054f099e5eacb3c0140d83898
 from flask_cors import CORS
 from authlib.integrations.flask_client import OAuth
 from model.model import WebDevAI
@@ -99,7 +103,11 @@ if github_client_id and github_client_secret:
 # Configuración de CORS más específica si es necesario, pero esto funciona para desarrollo
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
+<<<<<<< HEAD
 app.config['SESSION_COOKIE_SECURE'] = _is_production_like()
+=======
+app.config['SESSION_COOKIE_SECURE'] = os.getenv('FLASK_ENV') == 'production'
+>>>>>>> ea67bba717a6ece054f099e5eacb3c0140d83898
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
 
 # Configuración de CORS restringida
@@ -419,7 +427,11 @@ def auth_github_callback():
         session['user_id'] = user_id
         session['user_email'] = email
         session.modified = True
+<<<<<<< HEAD
         return _no_store_redirect(url_for('chat'))
+=======
+        return redirect(url_for('chat'))
+>>>>>>> ea67bba717a6ece054f099e5eacb3c0140d83898
     except Exception as e:
         print(f"GitHub OAuth error: {e}")
         return _no_store_redirect(url_for('index') + '?error=oauth_failed')
