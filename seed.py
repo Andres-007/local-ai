@@ -2,7 +2,7 @@ from model.database import ChatDatabase
 from pymongo import MongoClient
 import sys
 import os
-from datetime import datetime # Asegúrate de que datetime esté importado
+from datetime import datetime, timezone # Asegúrate de que datetime esté importado
 
 # --- Añade tus propios proyectos aquí ---
 # Asegúrate de que las URLs de las imágenes sean accesibles públicamente
@@ -587,7 +587,7 @@ def seed_projects():
                         'imageUrl': project['imageUrl'],
                         'projectUrl': project['projectUrl'],
                         'codeSnippet': project['codeSnippet'],
-                        'created_at': datetime.utcnow() # Actualizar la fecha
+                        'created_at': datetime.now(timezone.utc) # Actualizar la fecha
                     }
                 },
                 upsert=True # Opción mágica: inserta si no existe
