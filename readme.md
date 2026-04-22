@@ -248,13 +248,8 @@ Checklist rápido:
 
 ### No conecta a MongoDB Atlas (timeouts / DNS)
 
-- Revisa primero `RENDER.md` (especialmente Network Access y variables).
-- En Windows, si tu red/ISP provoca fallos resolviendo `mongodb+srv://`, existe el script:
-  - `fix_mongodb_dns.ps1` (**requiere admin**) para añadir entradas al archivo `hosts`.
-
-Importante:
-
-- Ese script está “hardcodeado” para un cluster concreto (hostnames/IPs). Si tu cluster es distinto, **debes actualizar los hostnames/IPs** antes de ejecutarlo.
+- Revisa Network Access en Atlas, la URI en variables de entorno y que la contraseña esté URL‑encodeada.
+- En Windows, si tu red/ISP provoca fallos resolviendo `mongodb+srv://`, revisa DNS o añade al archivo `hosts` los hostnames que Atlas indica para tu cluster (solo si tu proveedor lo recomienda).
 
 ### “GEMINI_API_KEY no encontrada”
 

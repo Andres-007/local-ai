@@ -73,32 +73,55 @@ class WebDevAI:
 			safety_settings=safety_settings,
 			system_instruction=system_instruction
 		)
-		
-		# Inicia la conversación con un historial limpio
-		self.convo = self.model.start_chat(history=[])
+
+	# Máximo de mensajes de historial (Mongo) pasados a Gemini por petición
+	MAX_GEMINI_HISTORY_MESSAGES = 80
+
+	def _normalize_history_for_gemini(self, db_messages):
+		"""Quita mensajes user finales sin respuesta model (turnos incompletos)."""
+		msgs = [m for m in (db_messages or []) if (m.get('content') or '').strip()]
+		while msgs and msgs[-1].get('role') == 'user':
+			msgs.pop()
+		return msgs
+
+	def _db_to_gemini_history(self, db_messages):
+		hist = []
+		for m in self._normalize_history_for_gemini(db_messages):
+			role = m.get('role')
+			content = (m.get('content') or '').strip()
+			if not content:
+				continue
+			grole = 'user' if role == 'user' else 'model'
+			hist.append({'role': grole, 'parts': [content]})
+		return hist
+
+	def _start_chat_from_history(self, history_messages=None):
+		return self.model.start_chat(history=self._db_to_gemini_history(history_messages or []))
+
+	def _safe_last_text(self, chat):
+		last = getattr(chat, "last", None)
+		if last and getattr(last, "text", None):
+			return last.text
+		return "Error: No se recibió respuesta del modelo."
 	
-	def generate(self, prompt):
+	def generate(self, prompt, history_messages=None):
 		"""
 		Envía un prompt del usuario al modelo y obtiene una respuesta completa.
 
 		Args:
 			prompt (str): La pregunta o instrucción del usuario.
+			history_messages (list, optional): Mensajes previos de la BD (misma conversación).
 
 		Returns:
 			str: La respuesta generada por el modelo de IA en formato Markdown.
 		"""
 		try:
-			self.convo.send_message(prompt)
-			return self._safe_last_text()
+			chat = self._start_chat_from_history(history_messages)
+			chat.send_message(prompt)
+			return self._safe_last_text(chat)
 		except Exception as e:
 			print(f"Error al contactar: {e}")
 			return "Error: No se pudo obtener una respuesta del modelo. Verifica la conexión a internet."
-
-	def _safe_last_text(self):
-		last = getattr(self.convo, "last", None)
-		if last and getattr(last, "text", None):
-			return last.text
-		return "Error: No se recibió respuesta del modelo."
 
 	# Extensiones de archivos de código/texto soportados
 	TEXT_EXTENSIONS = frozenset({
@@ -276,7 +299,7 @@ class WebDevAI:
 			print(f"Error en _get_readable_content ({filename}): {e}")
 			return None
 
-	def generate_with_file(self, prompt, file_storage=None, file_bytes=None, filename=None, mimetype=None):
+	def generate_with_file(self, prompt, file_storage=None, file_bytes=None, filename=None, mimetype=None, history_messages=None):
 		try:
 			if file_bytes is not None:
 				raw = file_bytes if isinstance(file_bytes, bytes) else bytes(file_bytes)
@@ -290,6 +313,7 @@ class WebDevAI:
 				raw = self._read_file_storage_once(file_storage)
 				if raw is None:
 					return "Error: No se pudo leer el archivo adjunto (stream cerrado o no disponible)."
+			chat = self._start_chat_from_history(history_messages)
 			file_like = self._wrap_bytes_as_file_like(raw, filename, mimetype)
 			ext = os.path.splitext(filename.lower())[1]
 			content = self._get_readable_content(file_like, filename, mimetype)
@@ -298,8 +322,8 @@ class WebDevAI:
 				lang = self._lang_for_filename(filename)
 				code_block = f"```{lang}\n{content}\n```" if lang else f"```\n{content}\n```"
 				combined_prompt = f"{prompt}\n\nArchivo adjunto: {filename}\n{code_block}".strip()
-				self.convo.send_message(combined_prompt)
-				return self._safe_last_text()
+				chat.send_message(combined_prompt)
+				return self._safe_last_text(chat)
 
 			if ext == ".pdf":
 				return (
@@ -315,8 +339,8 @@ class WebDevAI:
 					lang = self._lang_for_filename(filename)
 					code_block = f"```{lang}\n{content2}\n```" if lang else f"```\n{content2}\n```"
 					combined_prompt = f"{prompt}\n\nArchivo adjunto: {filename}\n{code_block}".strip()
-					self.convo.send_message(combined_prompt)
-					return self._safe_last_text()
+					chat.send_message(combined_prompt)
+					return self._safe_last_text(chat)
 				except Exception as e2:
 					print(f"Error leyendo archivo de código ({filename}): {e2}")
 					return f"No se pudo leer el archivo {filename}. Comprueba que no esté dañado. Detalle: {e2}"
@@ -332,8 +356,8 @@ class WebDevAI:
 					return "Error: No se pudo guardar el archivo adjunto."
 			try:
 				uploaded = genai.upload_file(tmp_path)
-				self.convo.send_message([uploaded, prompt or f"Analiza el archivo {filename}."])
-				return self._safe_last_text()
+				chat.send_message([uploaded, prompt or f"Analiza el archivo {filename}."])
+				return self._safe_last_text(chat)
 			finally:
 				if tmp_path:
 					try:
@@ -347,18 +371,20 @@ class WebDevAI:
 				return "Error al leer el PDF. Asegúrate de tener instalado: pip install pypdf"
 			return "Error: No se pudo procesar el archivo. Verifica el formato e inténtalo de nuevo."
 	
-	def generate_stream(self, prompt):
+	def generate_stream(self, prompt, history_messages=None):
 		"""
 		Envía un prompt del usuario al modelo y genera una respuesta en streaming.
 
 		Args:
 			prompt (str): La pregunta o instrucción del usuario.
+			history_messages (list, optional): Mensajes previos de la BD (misma conversación).
 
 		Yields:
 			str: Fragmentos de texto de la respuesta conforme se generan.
 		"""
 		try:
-			response = self.convo.send_message(prompt, stream=True)
+			chat = self._start_chat_from_history(history_messages)
+			response = chat.send_message(prompt, stream=True)
 			for chunk in response:
 				if getattr(chunk, "text", None):
 					yield chunk.text
@@ -366,7 +392,7 @@ class WebDevAI:
 			print(f"Error al contactar (streaming): {e}")
 			yield "Error: No se pudo obtener una respuesta del modelo. Verifica la conexión a internet."
 
-	def generate_stream_with_file(self, prompt, file_storage=None, file_bytes=None, filename=None, mimetype=None):
+	def generate_stream_with_file(self, prompt, file_storage=None, file_bytes=None, filename=None, mimetype=None, history_messages=None):
 		try:
 			if file_bytes is not None:
 				raw = file_bytes if isinstance(file_bytes, bytes) else bytes(file_bytes)
@@ -382,6 +408,7 @@ class WebDevAI:
 				if raw is None:
 					yield "Error: No se pudo leer el archivo adjunto (stream cerrado o no disponible)."
 					return
+			chat = self._start_chat_from_history(history_messages)
 			file_like = self._wrap_bytes_as_file_like(raw, filename, mimetype)
 			ext = os.path.splitext(filename.lower())[1]
 			content = self._get_readable_content(file_like, filename, mimetype)
@@ -390,7 +417,7 @@ class WebDevAI:
 				lang = self._lang_for_filename(filename)
 				code_block = f"```{lang}\n{content}\n```" if lang else f"```\n{content}\n```"
 				combined_prompt = f"{prompt}\n\nArchivo adjunto: {filename}\n{code_block}".strip()
-				response = self.convo.send_message(combined_prompt, stream=True)
+				response = chat.send_message(combined_prompt, stream=True)
 				for chunk in response:
 					if getattr(chunk, "text", None):
 						yield chunk.text
@@ -412,7 +439,7 @@ class WebDevAI:
 					lang = self._lang_for_filename(filename)
 					code_block = f"```{lang}\n{content2}\n```" if lang else f"```\n{content2}\n```"
 					combined_prompt = f"{prompt}\n\nArchivo adjunto: {filename}\n{code_block}".strip()
-					response = self.convo.send_message(combined_prompt, stream=True)
+					response = chat.send_message(combined_prompt, stream=True)
 					for chunk in response:
 						if getattr(chunk, "text", None):
 							yield chunk.text
@@ -434,7 +461,7 @@ class WebDevAI:
 					return
 			try:
 				uploaded = genai.upload_file(tmp_path)
-				response = self.convo.send_message([uploaded, prompt or f"Analiza el archivo {filename}."], stream=True)
+				response = chat.send_message([uploaded, prompt or f"Analiza el archivo {filename}."], stream=True)
 				for chunk in response:
 					if getattr(chunk, "text", None):
 						yield chunk.text

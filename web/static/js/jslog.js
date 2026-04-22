@@ -15,13 +15,87 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const projectDetailsModal = document.getElementById('projectDetailsModal');
     const closeProjectModalBtn = document.getElementById('closeProjectModalBtn');
-    const projectDetailsTabs = document.querySelectorAll('#projectDetailsTabs .modal-tab');
     const projectDetailsTitle = document.getElementById('projectDetailsTitle');
+    const projectDetailTabs = document.getElementById('projectDetailTabs');
+    const projectTabPreview = document.getElementById('projectTabPreview');
+    const projectTabCode = document.getElementById('projectTabCode');
     const projectPreviewContainer = document.getElementById('projectPreviewContainer');
-    const projectPreviewIframe = document.getElementById('projectPreview'); // FIXED: Removed duplicate "document ="
+    const projectPreviewFrame = document.getElementById('projectPreviewFrame');
     const projectCodeContainer = document.getElementById('projectCodeContainer');
     const projectCodeBlock = document.getElementById('projectCode');
     const swiperWrapper = document.querySelector('#projectsCarousel .swiper-wrapper');
+
+    function escapeHtml(s) {
+        return String(s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function safeHttpImageUrl(url, fallback) {
+        const u = String(url || '').trim();
+        if (/^https?:\/\//i.test(u)) return u;
+        return fallback;
+    }
+
+    function isLikelyHtmlDocument(code) {
+        const s = String(code || '').trim();
+        if (!s || s.charAt(0) !== '<') return false;
+        const head = s.slice(0, 8000).toLowerCase();
+        return head.includes('<!doctype html') ||
+            /^<\s*html[\s>]/i.test(s) ||
+            (head.includes('<html') && head.includes('</html>'));
+    }
+
+    function setProjectPreviewSrcdoc(html) {
+        const navigationInterceptorScript = `
+            <script>
+                document.addEventListener('DOMContentLoaded', function() {
+                    document.querySelectorAll('a').forEach(function(link) {
+                        link.addEventListener('click', function(event) {
+                            event.preventDefault();
+                        });
+                    });
+                    document.querySelectorAll('form').forEach(function(form) {
+                        form.addEventListener('submit', function(event) {
+                            event.preventDefault();
+                        });
+                    });
+                });
+            <\/script>
+        `;
+        const doc = String(html || '');
+        if (doc.includes('</body>')) {
+            projectPreviewFrame.srcdoc = doc.replace('</body>', navigationInterceptorScript + '</body>');
+        } else if (doc.includes('</html>')) {
+            projectPreviewFrame.srcdoc = doc.replace('</html>', navigationInterceptorScript + '</html>');
+        } else {
+            projectPreviewFrame.srcdoc = doc + navigationInterceptorScript;
+        }
+    }
+
+    function setProjectDetailTab(panel) {
+        const isPreview = panel === 'preview';
+        projectTabPreview.classList.toggle('active', isPreview);
+        projectTabCode.classList.toggle('active', !isPreview);
+        projectTabPreview.setAttribute('aria-selected', isPreview ? 'true' : 'false');
+        projectTabCode.setAttribute('aria-selected', isPreview ? 'false' : 'true');
+        projectPreviewContainer.classList.toggle('active', isPreview);
+        projectCodeContainer.classList.toggle('active', !isPreview);
+    }
+
+    function resetProjectDetailsModal() {
+        projectCodeBlock.textContent = '';
+        projectPreviewFrame.removeAttribute('srcdoc');
+        projectPreviewFrame.src = 'about:blank';
+        projectDetailTabs.classList.remove('is-hidden');
+        projectTabPreview.classList.remove('active');
+        projectTabCode.classList.remove('active');
+        projectPreviewContainer.classList.remove('active');
+        projectCodeContainer.classList.remove('active');
+    }
 
     // --- Lógica General de Modales ---
     let scrollYOnModalOpen = 0;
@@ -48,13 +122,9 @@ document.addEventListener('DOMContentLoaded', function() {
             window.scrollTo(0, scrollYOnModalOpen);
         }
 
-        // Limpiar iframe y resetear contenedores al cerrar modal de proyecto
+        // Limpiar contenido al cerrar modal de proyecto
         if (modalId === 'projectDetailsModal') {
-            projectPreviewIframe.src = 'about:blank';
-            projectPreviewIframe.srcdoc = '';
-            projectCodeBlock.textContent = '';
-            projectPreviewContainer.classList.remove('active');
-            projectCodeContainer.classList.remove('active');
+            resetProjectDetailsModal();
         }
     };
 
@@ -132,30 +202,12 @@ document.addEventListener('DOMContentLoaded', function() {
     closeProjectModalBtn.addEventListener('click', () => closeModal('projectDetailsModal'));
     projectDetailsModal.addEventListener('click', (e) => e.target === projectDetailsModal && closeModal('projectDetailsModal'));
 
-    projectDetailsTabs.forEach(tab => {
-        tab.addEventListener('click', () => {
-            const activeTab = tab.getAttribute('data-tab');
-            
-            // Activar la pestaña seleccionada
-            projectDetailsTabs.forEach(t => t.classList.remove('active'));
-            tab.classList.add('active');
-
-            // Mostrar solo el contenedor correspondiente
-            if (activeTab === 'preview') {
-                projectPreviewContainer.classList.add('active');
-                projectCodeContainer.classList.remove('active');
-            } else if (activeTab === 'code') {
-                projectPreviewContainer.classList.remove('active');
-                projectCodeContainer.classList.add('active');
-                
-                // Re-resaltar el código
-                setTimeout(() => {
-                    if (hljs) { 
-                        hljs.highlightElement(projectCodeBlock);
-                    }
-                }, 0);
-            }
-        });
+    projectTabPreview.addEventListener('click', () => {
+        if (projectDetailTabs.classList.contains('is-hidden')) return;
+        setProjectDetailTab('preview');
+    });
+    projectTabCode.addEventListener('click', () => {
+        setProjectDetailTab('code');
     });
 
     // --- Lógica de carga de Proyectos y Swiper ---
@@ -210,13 +262,16 @@ document.addEventListener('DOMContentLoaded', function() {
             slide.classList.add('swiper-slide');
             
             const fallbackImg = `https://placehold.co/600x400/1c1c2b/f0f0f5?text=Error+Img`;
+            const imgSrc = safeHttpImageUrl(project.imageUrl, fallbackImg);
+            const t = escapeHtml(String(project.title ?? ''));
+            const d = escapeHtml(String(project.description ?? ''));
 
             slide.innerHTML = `
                 <div class="project-card">
-                    <img src="${project.imageUrl || fallbackImg}" alt="Vista previa de ${project.title}" onerror="this.src='${fallbackImg}'">
+                    <img src="${imgSrc}" alt="Vista previa de ${t}" onerror="this.src='${fallbackImg}'">
                     <div class="project-card-content">
-                        <h3>${project.title}</h3>
-                        <p>${project.description}</p>
+                        <h3>${t}</h3>
+                        <p>${d}</p>
                         <button class="btn btn-secondary view-project-btn">
                             Ver Proyecto
                         </button>
@@ -226,61 +281,22 @@ document.addEventListener('DOMContentLoaded', function() {
             
             slide.querySelector('.view-project-btn').addEventListener('click', () => {
                 projectDetailsTitle.textContent = project.title;
-
-                // Primero, resetear todo - ocultar ambos contenedores
-                projectPreviewContainer.classList.remove('active');
-                projectCodeContainer.classList.remove('active');
-
-                projectPreviewIframe.srcdoc = ""; 
-                projectPreviewIframe.src = "about:blank"; 
-
                 const code = project.codeSnippet || "";
-                const url = project.projectUrl || "#";
-
-                const isFullHtml = code.trim().toLowerCase().startsWith('<!doctype html>') || 
-                                   code.trim().toLowerCase().startsWith('<html>');
-
-                if (isFullHtml) {
-                    const scriptToNeutralizeLinks = `
-                        <script>
-                            document.addEventListener('DOMContentLoaded', function() {
-                                document.querySelectorAll('a[href^="#"]').forEach(link => {
-                                    link.addEventListener('click', function(event) {
-                                        event.preventDefault(); 
-                                        console.log('Enlace de ancla bloqueado en previsualización: ' + link.getAttribute('href'));
-                                    });
-                                });
-                            });
-                        <\/script> 
-                    `; 
-                    
-                    projectPreviewIframe.srcdoc = code.replace(/<\/body>/i, scriptToNeutralizeLinks + '</body>');
-                } else {
-                    if (url !== "#" && url !== "") {
-                         projectPreviewIframe.src = url;
-                    } else {
-                        projectPreviewIframe.srcdoc = `<body style="font-family: Poppins, sans-serif; color: #a0a0b5; background: #0f0f1a; padding: 2rem; text-align: center;"><h2>Sin previsualización ejecutable</h2><p>Este proyecto es un fragmento de código o no tiene una URL de previsualización en vivo.</p><p>Puedes ver el código en la pestaña 'Código'.</p></body>`;
-                    }
-                }
-
+                const canPreview = isLikelyHtmlDocument(code);
                 projectCodeBlock.textContent = code;
-                
-                if (hljs) { 
+                if (typeof hljs !== 'undefined' && hljs.highlightElement) {
                     hljs.highlightElement(projectCodeBlock);
                 }
-
-                // Resetear todas las pestañas primero
-                projectDetailsTabs.forEach(t => t.classList.remove('active'));
-                
-                // Activar solo la pestaña de "Previsualización"
-                const previewTab = document.querySelector('#projectDetailsTabs .modal-tab[data-tab="preview"]');
-                if (previewTab) {
-                    previewTab.classList.add('active');
+                if (canPreview) {
+                    projectDetailTabs.classList.remove('is-hidden');
+                    setProjectPreviewSrcdoc(code);
+                    setProjectDetailTab('preview');
+                } else {
+                    projectDetailTabs.classList.add('is-hidden');
+                    projectPreviewFrame.removeAttribute('srcdoc');
+                    projectPreviewFrame.src = 'about:blank';
+                    setProjectDetailTab('code');
                 }
-                
-                // Mostrar SOLO el contenedor de previsualización
-                projectPreviewContainer.classList.add('active');
-
                 openModal('projectDetailsModal');
             });
 
@@ -354,19 +370,29 @@ document.addEventListener('DOMContentLoaded', function() {
         errorMessage.style.display = 'none';
         const email = document.getElementById('loginEmail').value;
         const password = document.getElementById('loginPassword').value;
+        const submitBtn = e.target.querySelector('.form-submit');
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Iniciando sesión...';
         try {
             const res = await fetch('/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
                 body: JSON.stringify({ email, password })
             });
             const data = await res.json();
             if (res.ok) {
-                window.location.href = '/chat';
+                window.location.replace('/chat');
             } else {
                 showError(data.error || 'Error desconocido.');
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Iniciar sesión';
             }
-        } catch (err) { showError('Error de conexión con el servidor.'); }
+        } catch (err) {
+            showError('Error de conexión con el servidor.');
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Iniciar sesión';
+        }
     });
 
     document.getElementById('registerForm').addEventListener('submit', async (e) => {
@@ -379,19 +405,33 @@ document.addEventListener('DOMContentLoaded', function() {
             showError('Las contraseñas no coinciden.');
             return;
         }
+        if (password.length < 8) {
+            showError('La contraseña debe tener al menos 8 caracteres.');
+            return;
+        }
+        const submitBtn = e.target.querySelector('.form-submit');
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Creando cuenta...';
         try {
             const res = await fetch('/register', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
                 body: JSON.stringify({ email, password })
             });
             const data = await res.json();
             if (res.ok) {
-                window.location.href = '/chat';
+                window.location.replace('/chat');
             } else {
                 showError(data.error || 'Error desconocido.');
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Crear cuenta';
             }
-        } catch (err) { showError('Error de conexión con el servidor.'); }
+        } catch (err) {
+            showError('Error de conexión con el servidor.');
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Crear cuenta';
+        }
     });
 
     // --- Mostrar error en URL (ej. ?error=oauth_failed) ---

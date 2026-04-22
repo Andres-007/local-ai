@@ -1,7 +1,6 @@
 from pymongo import MongoClient
-from pymongo.read_preferences import ReadPreference
 from pymongo.errors import ServerSelectionTimeoutError
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 import sys
 import subprocess
@@ -123,8 +122,8 @@ def _resolve_mongodb_srv_via_nslookup(uri):
     """
     Fallback: resuelve mongodb+srv usando nslookup (subprocess) cuando
     la resolución DNS de Python falla. Construye URI estándar mongodb://
-    con hostnames. Requiere ejecutar fix_mongodb_dns.ps1 como admin para
-    añadir hostnames al archivo hosts.
+    con hostnames. En Windows, si sigue fallando, suele ayudar revisar DNS
+    o entradas en el archivo hosts según MongoDB Atlas.
     """
     try:
         parsed = urllib.parse.urlparse(uri)
@@ -148,14 +147,21 @@ def _resolve_mongodb_srv_via_nslookup(uri):
             return None
         db_name = Config.MONGODB_DB_NAME or "admin"
         hosts_str = ",".join(f"{s}:27017" for s in shards[:3])
-        direct_uri = f"mongodb://{auth}@{shards[0]}:27017/admin?ssl=true&directConnection=true&authSource=admin"
-        try:
-            tmp_client = MongoClient(direct_uri, serverSelectionTimeoutMS=10000, connectTimeoutMS=10000)
-            rs_status = tmp_client.admin.command("replSetGetStatus")
-            tmp_client.close()
-            replica_set = rs_status.get("set")
-        except Exception:
-            replica_set = "atlas-cdvd67-shard-0"
+        # Nombre del replica set en Atlas: atlas-<id-de-host>-shard-0 (ej. ac-ncgdft4-shard-00-00 -> atlas-ac-ncgdft4-shard-0)
+        host0 = (shards[0] or "").split(".")[0]
+        m = re.match(r"^(.+)-shard-\d+-\d+$", host0)
+        replica_set = f"atlas-{m.group(1)}-shard-0" if m else None
+        if not replica_set:
+            direct_uri = f"mongodb://{auth}@{shards[0]}:27017/admin?ssl=true&directConnection=true&authSource=admin"
+            try:
+                tmp_client = MongoClient(direct_uri, serverSelectionTimeoutMS=10000, connectTimeoutMS=10000)
+                rs_status = tmp_client.admin.command("replSetGetStatus")
+                tmp_client.close()
+                replica_set = rs_status.get("set")
+            except Exception:
+                replica_set = None
+        if not replica_set:
+            return None
         opts = f"ssl=true&replicaSet={replica_set}&authSource=admin&retryWrites=true&w=majority"
         return f"mongodb://{auth}@{hosts_str}/{db_name}?{opts}"
     except Exception:
@@ -194,20 +200,24 @@ class ChatDatabase:
                 hypothesisId="A",
             )
             # #endregion
-            # Opciones para entornos cloud (Render, etc.): timeouts más altos
+            # Timeouts algo más altos para elecciones de primary en Atlas; escrituras exigen primary.
             client_options = {
-                "serverSelectionTimeoutMS": 30000,
-                "connectTimeoutMS": 20000,
-                "socketTimeoutMS": 20000,
+                "serverSelectionTimeoutMS": 60000,
+                "connectTimeoutMS": 30000,
+                "socketTimeoutMS": 45000,
                 "retryWrites": True,
-                # Evidence-based: primary is unreachable; allow reads from secondaries
-                "read_preference": ReadPreference.SECONDARY_PREFERRED,
+                "retryReads": True,
             }
-            # Evidence-based ordering:
-            # - mongodb+srv DNS is timing out in this environment, so try nslookup seedlist first
+            # Siempre intentar primero la URI canónica (mongodb+srv): descubrimiento correcto del primary.
+            # El fallback nslookup solo si falla la conexión (p. ej. DNS en el entorno).
             parsed_uri = urllib.parse.urlparse(uri)
             fallback_uri = _resolve_mongodb_srv_via_nslookup(uri) if parsed_uri.scheme == "mongodb+srv" else None
-            attempt_uris = [u for u in [fallback_uri, uri] if u] if parsed_uri.scheme == "mongodb+srv" else [uri]
+            if parsed_uri.scheme == "mongodb+srv":
+                attempt_uris = [uri]
+                if fallback_uri:
+                    attempt_uris.append(fallback_uri)
+            else:
+                attempt_uris = [uri]
             for attempt_uri in attempt_uris:
                 if not attempt_uri:
                     continue
@@ -238,8 +248,7 @@ class ChatDatabase:
                     self.users = self.db['users']
                     self.projects = self.db['projects']
                     try:
-                        # Use secondaryPreferred so we can still learn topology without a primary
-                        hello = self.client.admin.with_options(read_preference=ReadPreference.SECONDARY_PREFERRED).command("hello")
+                        hello = self.client.admin.command("hello")
                     except Exception as _hello_err:
                         hello = {"error": str(_hello_err)}
                     # #region agent log
@@ -248,7 +257,7 @@ class ChatDatabase:
                         message="Mongo connected; hello/topology snapshot",
                         data={
                             "uri_redacted": _redact_mongo_uri(attempt_uri),
-                            "read_preference": "SECONDARY_PREFERRED",
+                            "read_preference": "default_primary",
                             "hello_keys": sorted(list(hello.keys())) if isinstance(hello, dict) else [],
                             "isWritablePrimary": hello.get("isWritablePrimary") if isinstance(hello, dict) else None,
                             "primary": hello.get("primary") if isinstance(hello, dict) else None,
@@ -393,7 +402,7 @@ class ChatDatabase:
         user_data = {
             'email': email.lower(),
             'password': password_hash,
-            'created_at': datetime.utcnow()
+            'created_at': datetime.now(timezone.utc)
         }
         result = self.users.insert_one(user_data)
         return str(result.inserted_id)
@@ -449,7 +458,7 @@ class ChatDatabase:
             'google_id': google_id,
             'name': name or '',
             'password': None,
-            'created_at': datetime.utcnow()
+            'created_at': datetime.now(timezone.utc)
         }
         result = self.users.insert_one(user_data)
         return str(result.inserted_id)
@@ -482,7 +491,7 @@ class ChatDatabase:
             'github_id': github_id,
             'name': name or '',
             'password': None,
-            'created_at': datetime.utcnow()
+            'created_at': datetime.now(timezone.utc)
         }
         result = self.users.insert_one(user_data)
         return str(result.inserted_id)
@@ -516,8 +525,8 @@ class ChatDatabase:
         conversation = {
             'user_id': user_id,
             'title': title,
-            'created_at': datetime.utcnow(),
-            'updated_at': datetime.utcnow(),
+            'created_at': datetime.now(timezone.utc),
+            'updated_at': datetime.now(timezone.utc),
         }
         result = self.conversations.insert_one(conversation)
         return str(result.inserted_id)
@@ -529,12 +538,12 @@ class ChatDatabase:
             'conversation_id': conversation_id, # Se espera un ObjectId
             'role': role,
             'content': content,
-            'timestamp': datetime.utcnow()
+            'timestamp': datetime.now(timezone.utc)
         }
         self.messages.insert_one(message)
         self.conversations.update_one(
             {'_id': conversation_id},
-            {'$set': {'updated_at': datetime.utcnow()}}
+            {'$set': {'updated_at': datetime.now(timezone.utc)}}
         )
         return True
 
@@ -559,6 +568,38 @@ class ChatDatabase:
             msg['conversation_id'] = str(msg['conversation_id'])
         return messages
 
+    def get_conversation_history_tail(self, conversation_id, limit=80):
+        """Últimos `limit` mensajes en orden cronológico (antiguo → nuevo)."""
+        if not self._ensure_connection():
+            return []
+        try:
+            conv_id = ObjectId(conversation_id)
+        except Exception:
+            return []
+        if limit < 1:
+            return []
+        cursor = self.messages.find({'conversation_id': conv_id}).sort('timestamp', -1).limit(limit)
+        messages = list(cursor)
+        messages.reverse()
+        for msg in messages:
+            msg['_id'] = str(msg['_id'])
+            msg['conversation_id'] = str(msg['conversation_id'])
+        return messages
+
+    def get_conversation_user_id(self, conversation_id):
+        """Devuelve user_id de la conversación como string, o None si no existe."""
+        if not self._ensure_connection():
+            return None
+        try:
+            oid = conversation_id if isinstance(conversation_id, ObjectId) else ObjectId(conversation_id)
+        except Exception:
+            return None
+        doc = self.conversations.find_one({'_id': oid}, {'user_id': 1})
+        if not doc:
+            return None
+        uid = doc.get('user_id')
+        return str(uid) if uid is not None else None
+
     def get_user_conversations(self, user_id, limit=None, skip=0):
         if not self._ensure_connection():
             return []
@@ -580,11 +621,10 @@ class ChatDatabase:
             return False
         try:
             conv_obj_id = ObjectId(conversation_id)
-            conversation = self.conversations.find_one({
-                '_id': conv_obj_id,
-                'user_id': user_id
-            })
+            conversation = self.conversations.find_one({'_id': conv_obj_id})
             if not conversation:
+                return False
+            if str(conversation.get('user_id')) != str(user_id):
                 return False
 
             self.messages.delete_many({'conversation_id': conv_obj_id})
@@ -627,7 +667,7 @@ class ChatDatabase:
             'imageUrl': imageUrl,
             'projectUrl': projectUrl,
             'codeSnippet': codeSnippet,
-            'created_at': datetime.utcnow()
+            'created_at': datetime.now(timezone.utc)
         }
         result = self.projects.insert_one(project_data)
         return str(result.inserted_id)

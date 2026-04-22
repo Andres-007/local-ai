@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, session, Response, redirect, url_for
+from flask import Flask, render_template, request, jsonify, session, Response, redirect, url_for, send_from_directory
 from flask_cors import CORS
 from authlib.integrations.flask_client import OAuth
 from model.model import WebDevAI
@@ -7,8 +7,9 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 import secrets
 import os
-import json
 import time
+import json
+from datetime import timedelta
 from urllib.parse import urlparse
 from bson.objectid import ObjectId
 from bson.errors import InvalidId
@@ -60,7 +61,14 @@ if github_client_id and github_client_secret:
     )
 
 # Configuración de CORS más específica si es necesario, pero esto funciona para desarrollo
-CORS(app) 
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SECURE'] = os.getenv('FLASK_ENV') == 'production'
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
+
+# Configuración de CORS restringida
+allowed_origins = os.getenv('CORS_ORIGINS', 'http://localhost:4000,http://127.0.0.1:4000').split(',')
+CORS(app, origins=[o.strip() for o in allowed_origins], supports_credentials=True)
 
 # Inicializar servicios
 ai_model = WebDevAI()
@@ -83,22 +91,21 @@ def _extract_request_data():
         data = request.get_json(silent=True) or {}
         prompt = data.get('prompt')
         conversation_id = data.get('conversation_id')
-        file = None
         file_bytes = None
         file_filename = None
         file_mimetype = None
     else:
         prompt = request.form.get('prompt')
         conversation_id = request.form.get('conversation_id')
-        file = request.files.get('file')
+        uploaded_file = request.files.get('file')
         file_bytes = None
         file_filename = None
         file_mimetype = None
-        if file:
+        if uploaded_file:
             try:
-                file_bytes = file.read()
-                file_filename = file.filename or "archivo"
-                file_mimetype = file.mimetype or ""
+                file_bytes = uploaded_file.read()
+                file_filename = uploaded_file.filename or "archivo"
+                file_mimetype = uploaded_file.mimetype or ""
                 if file_bytes is None:
                     file_bytes = b""
                 elif isinstance(file_bytes, str):
@@ -107,8 +114,34 @@ def _extract_request_data():
                     file_bytes = bytes(file_bytes)
             except Exception as e:
                 print(f"Error leyendo archivo adjunto en request: {e}")
-                file = None
-    return (prompt or '').strip(), conversation_id, file, file_bytes, file_filename, file_mimetype
+                file_bytes = None
+                file_filename = None
+                file_mimetype = None
+    return (prompt or '').strip(), conversation_id, file_bytes, file_filename, file_mimetype
+
+
+def _prepare_generation_context(conversation_id_str, user_id):
+    try:
+        conversation_id = ObjectId(conversation_id_str)
+    except InvalidId:
+        return None, None, jsonify({"error": "conversation_id inválido"}), 400
+
+    owner = db.get_conversation_user_id(conversation_id)
+    if not _user_ids_match(owner, user_id):
+        return None, None, jsonify({"error": "Conversación no encontrada o no autorizada"}), 404
+
+    history_tail = db.get_conversation_history_tail(
+        conversation_id_str, limit=WebDevAI.MAX_GEMINI_HISTORY_MESSAGES
+    )
+    return conversation_id, history_tail, None, None
+
+
+def _user_ids_match(stored_user_id, session_user_id):
+    """True si el user_id de Mongo (str u ObjectId) coincide con session['user_id'] (str)."""
+    if stored_user_id is None or session_user_id is None:
+        return False
+    return str(stored_user_id) == str(session_user_id)
+
 
 # --- Decorador para rutas protegidas ---
 def login_required(f):
@@ -122,6 +155,11 @@ def login_required(f):
     return decorated_function
 
 # --- Rutas de Autenticación y Vistas ---
+@app.route('/favicon.ico')
+def favicon():
+    return send_from_directory(app.static_folder, 'favicon.svg', mimetype='image/svg+xml')
+
+
 @app.route('/')
 def index():
     """
@@ -163,8 +201,10 @@ def login():
     if not user or not user.get('password'):
         return jsonify({"error": "Credenciales inválidas"}), 401
     if check_password_hash(user['password'], password):
+        session.permanent = True
         session['user_id'] = str(user['_id'])
         session['user_email'] = user['email']
+        session.modified = True
         return jsonify({"message": "Inicio de sesión exitoso"}), 200
 
     return jsonify({"error": "Credenciales inválidas"}), 401
@@ -178,6 +218,9 @@ def register():
     if not email or not password:
         return jsonify({"error": "Email y contraseña son requeridos"}), 400
 
+    if len(password) < 8:
+        return jsonify({"error": "La contraseña debe tener al menos 8 caracteres"}), 400
+
     if not db._ensure_connection():
         return jsonify({"error": "Servicio no disponible. Intenta más tarde."}), 503
 
@@ -189,8 +232,10 @@ def register():
     if not user_id:
         return jsonify({"error": "No se pudo crear la cuenta. Verifica la conexión a la base de datos."}), 503
 
+    session.permanent = True
     session['user_id'] = user_id
     session['user_email'] = email
+    session.modified = True
 
     return jsonify({"message": "Registro exitoso", "user_id": user_id}), 201
 
@@ -305,8 +350,10 @@ def auth_github_callback():
                     return redirect(url_for('index') + '?error=create_failed')
         else:
             user_id = str(user['_id'])
+        session.permanent = True
         session['user_id'] = user_id
         session['user_email'] = email
+        session.modified = True
         return redirect(url_for('chat'))
     except Exception as e:
         print(f"GitHub OAuth error: {e}")
@@ -351,6 +398,20 @@ def get_conversations():
     conversations = conversations[:limit]
     return jsonify({"conversations": conversations, "has_more": has_more, "limit": limit, "offset": offset})
 
+@app.route('/api/conversations', methods=['POST'])
+@login_required
+def create_conversation():
+    data = request.get_json(silent=True) or {}
+    title = (data.get('title') or "Nueva Conversación").strip()
+    if not title:
+        title = "Nueva Conversación"
+    if len(title) > 80:
+        title = title[:80]
+    conversation_id = db.create_conversation(session['user_id'], title)
+    if not conversation_id:
+        return jsonify({"error": "No se pudo crear la conversación"}), 503
+    return jsonify({"conversation_id": conversation_id, "title": title}), 201
+
 @app.route('/api/conversations/<conversation_id>', methods=['GET'])
 @login_required
 def get_conversation(conversation_id):
@@ -361,7 +422,7 @@ def get_conversation(conversation_id):
         skip=offset,
         newest_first=True
     )
-    if not conversation or conversation.get('user_id') != session['user_id']:
+    if not conversation or not _user_ids_match(conversation.get('user_id'), session.get('user_id')):
         return jsonify({"error": "Conversación no encontrada o no autorizada"}), 404
     conversation['messages'] = conversation.get('messages') or []
     has_more = len(conversation['messages']) > limit
@@ -384,7 +445,7 @@ def delete_conversation(conversation_id):
 @app.route('/api/generate', methods=['POST'])
 @login_required
 def api_generate():
-    prompt, conversation_id_str, file, file_bytes, file_filename, file_mimetype = _extract_request_data()
+    prompt, conversation_id_str, file_bytes, file_filename, file_mimetype = _extract_request_data()
     user_id = session['user_id']
     
     if not prompt and file_bytes is None:
@@ -398,18 +459,23 @@ def api_generate():
             if not conversation_id_str:
                 return jsonify({"error": "No se pudo crear la conversación. Verifica la conexión a la base de datos."}), 503
 
-        try:
-            conversation_id = ObjectId(conversation_id_str)
-        except InvalidId:
-            return jsonify({"error": "conversation_id inválido"}), 400
+        conversation_id, history_tail, error_response, error_code = _prepare_generation_context(conversation_id_str, user_id)
+        if error_response:
+            return error_response, error_code
 
         user_message = prompt or (f"Archivo adjunto: {file_filename}" if file_filename else "")
         if user_message:
             db.save_message(conversation_id, 'user', user_message)
         if file_bytes is not None:
-            response_text = ai_model.generate_with_file(prompt, file_bytes=file_bytes, filename=file_filename, mimetype=file_mimetype)
+            response_text = ai_model.generate_with_file(
+                prompt,
+                file_bytes=file_bytes,
+                filename=file_filename,
+                mimetype=file_mimetype,
+                history_messages=history_tail,
+            )
         else:
-            response_text = ai_model.generate(prompt)
+            response_text = ai_model.generate(prompt, history_messages=history_tail)
         db.save_message(conversation_id, 'bot', response_text)
         
         return jsonify({
@@ -423,37 +489,46 @@ def api_generate():
 @app.route('/api/generate-stream', methods=['POST'])
 @login_required
 def api_generate_stream():
-    prompt, conversation_id_str, file, file_bytes, file_filename, file_mimetype = _extract_request_data()
-    
+    prompt, conversation_id_str, file_bytes, file_filename, file_mimetype = _extract_request_data()
+    user_id = session['user_id']
+
     if (not prompt and file_bytes is None) or not conversation_id_str:
         return jsonify({"error": "Faltan 'prompt' o 'conversation_id'"}), 400
 
     def generate():
         full_response = ""
         try:
-            try:
-                conversation_id = ObjectId(conversation_id_str)
-            except InvalidId:
-                yield "Error: conversation_id inválido"
+            conversation_id, history_tail, error_response, error_code = _prepare_generation_context(conversation_id_str, user_id)
+            if error_response:
+                try:
+                    payload = error_response.get_json(silent=True) or {}
+                    yield f"Error: {payload.get('error', 'Error interno del servidor')}"
+                except Exception:
+                    yield "Error: No se pudo procesar la solicitud."
                 return
 
             user_message = prompt or (f"Archivo adjunto: {file_filename}" if file_filename else "")
             if user_message:
                 db.save_message(conversation_id, 'user', user_message)
-            
+
             if file_bytes is not None:
-                stream = ai_model.generate_stream_with_file(prompt, file_bytes=file_bytes, filename=file_filename, mimetype=file_mimetype)
+                stream = ai_model.generate_stream_with_file(
+                    prompt,
+                    file_bytes=file_bytes,
+                    filename=file_filename,
+                    mimetype=file_mimetype,
+                    history_messages=history_tail,
+                )
             else:
-                stream = ai_model.generate_stream(prompt)
+                stream = ai_model.generate_stream(prompt, history_messages=history_tail)
             for chunk in stream:
                 full_response += chunk
                 yield chunk
-            
+
             db.save_message(conversation_id, 'bot', full_response)
         except Exception as e:
-            error_msg = f"Error: {str(e)}"
             print(f"Error en streaming: {e}")
-            yield error_msg
+            yield "Error: No se pudo completar la respuesta. Inténtalo de nuevo."
     
     return Response(generate(), mimetype='text/plain')
 
