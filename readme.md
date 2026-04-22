@@ -273,6 +273,13 @@ Checklist rápido:
 - Crea `.env` en la raíz y añade `GEMINI_API_KEY=...`.
 - Reinicia la app.
 
+### Vercel: “No flask entrypoint found”
+
+- El runtime importa el proyecto para localizar la variable Flask ``app``. Si el módulo **falla al importar** (por ejemplo un ``RuntimeError`` al cargar), Vercel muestra este mensaje aunque exista ``app.py``.
+- Asegura **raíz del proyecto en Vercel** = carpeta donde están ``app.py`` / ``wsgi.py`` y ``requirements.txt`` (no un subdirectorio equivocado).
+- Hay un **`wsgi.py`** que reexporta ``app`` por si el detector prioriza ``wsgi:app``.
+- Si tienes **`pyproject.toml`** vacío o a medias, Vercel puede usar **uv** y dejar de instalar bien las deps; o bien completa dependencias en `pyproject.toml`, o evita el conflicto (por ejemplo no versionar un `pyproject.toml` a medias, o ver la nota de Vercel sobre `requirements.txt` vs uv).
+
 ---
 
 ## Seguridad
@@ -291,6 +298,8 @@ Ejemplo de comando (Linux):
 
 ```bash
 gunicorn app:app --bind 0.0.0.0:${PORT:-4000}
+# o, explícito con wsgi.py:
+gunicorn wsgi:app --bind 0.0.0.0:${PORT:-4000}
 ```
 
 Notas:

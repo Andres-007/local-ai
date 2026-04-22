@@ -39,11 +39,15 @@ if _secret_from_env:
 else:
     app.secret_key = secrets.token_hex(16)
 
-# Production / Vercel: a random secret per process breaks signed session cookies (login → /chat → landing).
+# Do not raise here: Vercel’s Flask discovery imports this module during build; a missing
+# SECRET_KEY at that moment would hide the ``app`` object and yield “No flask entrypoint found”.
 if not _secret_from_env and _is_production_like():
-    raise RuntimeError(
-        "SECRET_KEY must be set when FLASK_ENV=production or on Vercel (VERCEL=1). "
-        "Without a stable value, Flask cannot verify the session on the next request, so /chat redirects back to /."
+    import sys
+
+    print(
+        "CRITICAL: SECRET_KEY is not set while FLASK_ENV=production or VERCEL=1. "
+        "Set SECRET_KEY in the project environment or sessions (login / /chat) will not work.",
+        file=sys.stderr,
     )
 
 if _is_trusted_proxy_hosting():
