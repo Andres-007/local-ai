@@ -418,12 +418,50 @@ body.modal-open { overflow: hidden; height: 100%; position: fixed; width: 100%; 
 }
 #projectDetailsModal .modal-header {
     padding: 1rem 2rem;
+    padding-right: 3.25rem; /* espacio para .modal-close absoluto */
     display: flex;
     justify-content: space-between;
     align-items: center;
     flex-shrink: 0; /* AÑADIDO: Evita que el header se comprima */
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+#projectDetailsModal .project-detail-tabs {
+    display: flex;
+    gap: 0.25rem;
+    align-items: center;
+    flex-shrink: 0;
+}
+#projectDetailsModal .project-detail-tabs.is-hidden {
+    display: none;
+}
+#projectDetailsModal .project-detail-tab {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: 600;
+    font-size: 0.95rem;
+    padding: 0.45rem 0.85rem;
+    color: var(--color-texto-secundario);
+    border-bottom: 3px solid transparent;
+    transition: color var(--duration-fast), border-color var(--duration-fast);
+}
+#projectDetailsModal .project-detail-tab:hover {
+    color: var(--color-texto);
+}
+#projectDetailsModal .project-detail-tab.active {
+    color: var(--color-texto);
+    border-bottom-color: var(--color-primario);
+}
+#projectDetailsModal .project-detail-tab:focus-visible {
+    outline: 2px solid var(--color-primario);
+    outline-offset: 2px;
+    border-radius: 4px;
 }
 #projectDetailsTitle {
+    flex: 1;
+    min-width: 0;
     font-size: 1.5rem;
     color: var(--color-texto);
     margin: 0;
@@ -497,7 +535,7 @@ body.modal-open { overflow: hidden; height: 100%; position: fixed; width: 100%; 
         margin: 0;
         border-radius: 0;
     }
-    #projectDetailsModal .modal-header { padding: 1rem; }
+    #projectDetailsModal .modal-header { padding: 1rem; padding-right: 3rem; }
     #projectDetailsTitle { font-size: 1.2rem; max-width: 70%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #projectCodeContainer { padding: 1rem; }
 }
