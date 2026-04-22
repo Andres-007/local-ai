@@ -1,72 +1,73 @@
 document.addEventListener('DOMContentLoaded', () => {
-    const setRealViewportHeight = () => {
-        document.documentElement.style.setProperty('--vh', `${window.innerHeight * 0.01}px`);
-    };
-    window.addEventListener('resize', setRealViewportHeight);
-    setRealViewportHeight();
+    const setRealViewportHeight = () => {
+        document.documentElement.style.setProperty('--vh', `${window.innerHeight * 0.01}px`);
+    };
+    window.addEventListener('resize', setRealViewportHeight);
+    setRealViewportHeight();
 
-    const sidebar = document.getElementById('sidebar');
-    const toggleBtn = document.getElementById('toggle-sidebar');
-    const newChatBtn = document.getElementById('new-chat-btn');
-    const conversationsList = document.getElementById('conversations-list');
-    const chatContainer = document.getElementById('chat-container');
-    const chatForm = document.getElementById('chat-form');
-    const chatInput = document.getElementById('chat-input');
+    const sidebar = document.getElementById('sidebar');
+    const toggleBtn = document.getElementById('toggle-sidebar');
+    const newChatBtn = document.getElementById('new-chat-btn');
+    const conversationsList = document.getElementById('conversations-list');
+    const chatContainer = document.getElementById('chat-container');
+    const chatForm = document.getElementById('chat-form');
+    const chatInput = document.getElementById('chat-input');
     const fileInput = document.getElementById('file-input');
     const attachmentsPreview = document.getElementById('attachments-preview');
-    const sendBtn = document.getElementById('send-btn');
-    const sidebarOverlay = document.getElementById('sidebar-overlay');
-    const previewModal = document.getElementById('preview-modal');
-    const closeModalBtn = document.getElementById('close-modal');
-    const runnerFrame = document.getElementById('runner-frame');
-    const deleteModal = document.getElementById('delete-confirm-modal');
-    const cancelDeleteBtn = document.getElementById('cancel-delete-btn');
-    const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
+    const sendBtn = document.getElementById('send-btn');
+    const sidebarOverlay = document.getElementById('sidebar-overlay');
+    const previewModal = document.getElementById('preview-modal');
+    const closeModalBtn = document.getElementById('close-modal');
+    const runnerFrame = document.getElementById('runner-frame');
+    const deleteModal = document.getElementById('delete-confirm-modal');
+    const cancelDeleteBtn = document.getElementById('cancel-delete-btn');
+    const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
 
-    let currentConversationId = null;
-    let conversationToDeleteId = null;
-    let currentPreviewCode = '';
+    let currentConversationId = null;
+    let conversationToDeleteId = null;
+    let currentPreviewCode = '';
+    let currentStreamController = null;
     const conversationPaging = { limit: 30, offset: 0, hasMore: false, loading: false };
     const messagePaging = { limit: 50, offset: 0, hasMore: false, loading: false };
-    
-    // Se ha modificado el inicializador de markdown-it
-    const md = window.markdownit({
-        highlight: (str, lang) => {
-            if (lang && hljs.getLanguage(lang)) {
-                try {
-                    const result = hljs.highlight(str, { language: lang, ignoreIllegals: true });
-                    // Se añade la clase del lenguaje al tag <code> para que el selector funcione
-                    return `<pre class="hljs"><code class="language-${lang}">${result.value}</code></pre>`;
-                } catch (__) {
-                    // Fallback en caso de error
-                    return `<pre class="hljs"><code class="language-${lang}">${md.utils.escapeHtml(str)}</code></pre>`;
-                }
-            }
-            // Si no hay lenguaje, se devuelve como antes
-            return `<pre class="hljs"><code>${md.utils.escapeHtml(str)}</code></pre>`;
-        }
-    });
-    // --- FIN DE LA CORRECCIÓN ---
+    
+    // Inicializador de markdown-it con syntax highlighting
+    const md = window.markdownit({
+        highlight: (str, lang) => {
+            if (lang && hljs.getLanguage(lang)) {
+                try {
+                    const result = hljs.highlight(str, { language: lang, ignoreIllegals: true });
+                    // Se añade la clase del lenguaje al tag <code> para que el selector funcione
+                    return `<pre class="hljs"><code class="language-${lang}">${result.value}</code></pre>`;
+                } catch (__) {
+                    // Fallback en caso de error
+                    return `<pre class="hljs"><code class="language-${lang}">${md.utils.escapeHtml(str)}</code></pre>`;
+                }
+            }
+            // Si no hay lenguaje, se devuelve como antes
+            return `<pre class="hljs"><code>${md.utils.escapeHtml(str)}</code></pre>`;
+        }
+    });
 
-    const openSidebar = () => { sidebar.classList.add('open'); sidebarOverlay.classList.add('active'); };
-    const closeSidebar = () => { sidebar.classList.remove('open'); sidebarOverlay.classList.remove('active'); };
+    const openSidebar = () => { sidebar.classList.add('open'); sidebarOverlay.classList.add('active'); };
+    const closeSidebar = () => { sidebar.classList.remove('open'); sidebarOverlay.classList.remove('active'); };
 
-    toggleBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (window.innerWidth < 768) {
-            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
-        } else {
-            sidebar.classList.toggle('collapsed');
-        }
-    });
-    sidebarOverlay.addEventListener('click', closeSidebar);
+    toggleBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (window.innerWidth < 768) {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        } else {
+            sidebar.classList.toggle('collapsed');
+        }
+    });
+    sidebarOverlay.addEventListener('click', closeSidebar);
 
     function escapeHtml(s) {
         return String(s)
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     function renderAttachmentPreview() {
@@ -121,15 +122,36 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Helper para fetch que maneja errores de autenticación
-    async function fetchApi(url, options = {}) {
-        const res = await fetch(url, options);
-        if (res.status === 401) {
-            window.location.href = '/'; // Redirigir al login
-            throw new Error('No autorizado');
-        }
-        return res;
-    }
+    // Helper para fetch que maneja errores de autenticación
+    async function fetchApi(url, options = {}) {
+        const res = await fetch(url, options);
+        if (res.status === 401) {
+            window.location.href = '/'; // Redirigir al login
+            throw new Error('No autorizado');
+        }
+        return res;
+    }
+
+    async function ensureConversationId(initialText) {
+        if (currentConversationId) return currentConversationId;
+        const base = (initialText || '').trim();
+        const title = base ? (base.length > 50 ? `${base.slice(0, 50)}...` : base) : 'Nueva Conversación';
+        const res = await fetchApi('/api/conversations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title })
+        });
+        if (!res.ok) {
+            throw new Error(`HTTP error! status: ${res.status}`);
+        }
+        const data = await res.json();
+        if (!data.conversation_id) {
+            throw new Error('No se pudo crear la conversación');
+        }
+        currentConversationId = data.conversation_id;
+        await loadConversations();
+        return currentConversationId;
+    }
 
     async function loadConversations(reset = true) {
         if (conversationPaging.loading) return;
@@ -160,9 +182,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function displayConversations(conversations, append = false) {
         const html = conversations.map(conv => `
-            <div class="conversation-item" data-id="${conv._id}">
-                <span class="conversation-title">${conv.title}</span>
-                <button class="delete-btn" data-id="${conv._id}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
+            <div class="conversation-item" data-id="${escapeHtml(String(conv._id))}">
+                <span class="conversation-title">${escapeHtml(String(conv.title ?? ''))}</span>
+                <button class="delete-btn" data-id="${escapeHtml(String(conv._id))}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
             </div>`).join('');
         if (append) {
             conversationsList.insertAdjacentHTML('beforeend', html);
@@ -185,7 +207,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         conversationsList.appendChild(btn);
     }
-    
+    
     async function loadConversation(id, reset = true) {
         if (messagePaging.loading) return;
         messagePaging.loading = true;
@@ -232,16 +254,16 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         chatContainer.insertAdjacentElement('afterbegin', btn);
     }
-    
-    cancelDeleteBtn.addEventListener('click', () => deleteModal.classList.remove('show'));
-    confirmDeleteBtn.addEventListener('click', async () => {
-        if (!conversationToDeleteId) return;
-        try {
+    
+    cancelDeleteBtn.addEventListener('click', () => deleteModal.classList.remove('show'));
+    confirmDeleteBtn.addEventListener('click', async () => {
+        if (!conversationToDeleteId) return;
+        try {
             const deletingId = conversationToDeleteId;
             const itemEl = conversationsList.querySelector(`.conversation-item[data-id="${deletingId}"]`);
 
-            await fetchApi(`/api/conversations/${deletingId}`, { method: 'DELETE' });
-            if (currentConversationId === deletingId) newChatBtn.click();
+            await fetchApi(`/api/conversations/${deletingId}`, { method: 'DELETE' });
+            if (currentConversationId === deletingId) newChatBtn.click();
 
             if (itemEl) {
                 itemEl.classList.add('removing');
@@ -255,135 +277,155 @@ document.addEventListener('DOMContentLoaded', () => {
                 itemEl.remove();
             }
             await loadConversations();
-        } catch (err) {
-            if (err.message !== 'No autorizado') console.error('Error eliminando:', err);
-        } finally {
-            deleteModal.classList.remove('show');
-            conversationToDeleteId = null;
-        }
-    });
+        } catch (err) {
+            if (err.message !== 'No autorizado') console.error('Error eliminando:', err);
+        } finally {
+            deleteModal.classList.remove('show');
+            conversationToDeleteId = null;
+        }
+    });
 
     chatForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const message = chatInput.value.trim();
-    const file = fileInput.files[0];
-    if (!message && !file) return;
-    
-    if (chatContainer.querySelector('.empty-state')) {
-        chatContainer.innerHTML = '';
-    }
-
-    const displayMessage = message || (file ? `Archivo adjunto: ${file.name}` : '');
-    appendMessage(displayMessage, 'user');
-    const typingIndicator = appendMessage('<div class="typing-indicator"><span></span><span></span><span></span></div>', 'bot', true);
-    chatInput.value = '';
-    fileInput.value = '';
-    renderAttachmentPreview();
-    autoResizeTextarea();
-    sendBtn.disabled = true;
-
-    try {
-        const endpoint = currentConversationId ? '/api/generate-stream' : '/api/generate';
-        let res;
-        if (file) {
-            const formData = new FormData();
-            formData.append('prompt', message || `Archivo adjunto: ${file.name}`);
-            if (currentConversationId) {
-                formData.append('conversation_id', currentConversationId);
-            }
-            formData.append('file', file);
-            res = await fetchApi(endpoint, {
-                method: 'POST',
-                body: formData
-            });
-        } else {
-            res = await fetchApi(endpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    prompt: message, 
-                    conversation_id: currentConversationId 
-                })
-            });
+        e.preventDefault();
+        const message = chatInput.value.trim();
+        const file = fileInput.files[0];
+        if (!message && !file) return;
+        
+        if (chatContainer.querySelector('.empty-state')) {
+            chatContainer.innerHTML = '';
         }
 
-        if (!res.ok) {
-            throw new Error(`HTTP error! status: ${res.status}`);
+        const displayMessage = message || (file ? `Archivo adjunto: ${file.name}` : '');
+        appendMessage(displayMessage, 'user');
+        const typingIndicator = appendMessage('<div class="typing-indicator"><span></span><span></span><span></span></div>', 'bot', true);
+        chatInput.value = '';
+        fileInput.value = '';
+        renderAttachmentPreview();
+        autoResizeTextarea();
+        sendBtn.disabled = true;
+
+        // Abort any in-flight stream before starting a new one
+        if (currentStreamController) {
+            try { currentStreamController.abort(); } catch (_) {}
+            currentStreamController = null;
         }
+        const abortController = new AbortController();
+        currentStreamController = abortController;
 
-        if (res.headers.get("content-type")?.includes("text/plain")) {
-            // Streaming response handling
-            if (!res.body) {
-                throw new Error('Response body is null');
+        try {
+            const conversationId = await ensureConversationId(displayMessage);
+            const endpoint = '/api/generate-stream';
+            let res;
+            if (file) {
+                const formData = new FormData();
+                formData.append('prompt', message || `Archivo adjunto: ${file.name}`);
+                formData.append('conversation_id', conversationId);
+                formData.append('file', file);
+                res = await fetchApi(endpoint, {
+                    method: 'POST',
+                    body: formData,
+                    signal: abortController.signal
+                });
+            } else {
+                res = await fetchApi(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        prompt: message, 
+                        conversation_id: conversationId 
+                    }),
+                    signal: abortController.signal
+                });
             }
-            const reader = res.body.getReader();
-            const decoder = new TextDecoder();
-            let fullResponse = '';
-            const content = typingIndicator?.querySelector('.message-content');
-            if (!content) {
-                throw new Error('Message content not found');
-            }
-            content.innerHTML = '';
-            let renderTimeout = null;
 
-            const scheduleRender = (final = false) => {
-                if (final) {
-                    if (renderTimeout) {
-                        clearTimeout(renderTimeout);
-                        renderTimeout = null;
+            if (!res.ok) {
+                throw new Error(`HTTP error! status: ${res.status}`);
+            }
+
+            if (res.headers.get("content-type")?.includes("text/plain")) {
+                // Streaming response handling
+                if (!res.body) {
+                    throw new Error('Response body is null');
+                }
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let fullResponse = '';
+                const content = typingIndicator?.querySelector('.message-content');
+                if (!content) {
+                    throw new Error('Message content not found');
+                }
+                content.innerHTML = '';
+                let renderTimeout = null;
+
+                const scheduleRender = (final = false) => {
+                    if (final) {
+                        if (renderTimeout) {
+                            clearTimeout(renderTimeout);
+                            renderTimeout = null;
+                        }
+                        content.innerHTML = md.render(fullResponse);
+                        addPreviewButton(content);
+                        chatContainer.scrollTop = chatContainer.scrollHeight;
+                        return;
                     }
-                    content.innerHTML = md.render(fullResponse);
-                    addPreviewButton(content);
-                    chatContainer.scrollTop = chatContainer.scrollHeight;
-                    return;
-                }
-                if (renderTimeout) return;
-                renderTimeout = setTimeout(() => {
-                    renderTimeout = null;
-                    content.innerHTML = md.render(fullResponse);
-                    chatContainer.scrollTop = chatContainer.scrollHeight;
-                }, 120);
-            };
+                    if (renderTimeout) return;
+                    renderTimeout = setTimeout(() => {
+                        renderTimeout = null;
+                        content.innerHTML = md.render(fullResponse);
+                        chatContainer.scrollTop = chatContainer.scrollHeight;
+                    }, 250);
+                };
 
-            try {
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    
-                    const chunk = decoder.decode(value, { stream: true });
-                    fullResponse += chunk;
-                    scheduleRender();
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        
+                        const chunk = decoder.decode(value, { stream: true });
+                        fullResponse += chunk;
+                        scheduleRender();
+                    }
+                    // Final decode to handle any remaining bytes
+                    const remaining = decoder.decode();
+                    if (remaining) {
+                        fullResponse += remaining;
+                    }
+                    scheduleRender(true);
+                } catch (streamError) {
+                    if (streamError.name === 'AbortError') {
+                        console.log('Stream aborted by user');
+                        return;
+                    }
+                    console.error('Stream reading error:', streamError);
+                    scheduleRender(true);
+                    if (fullResponse.trim()) {
+                        content.insertAdjacentHTML('beforeend', '<p><em>La transmisión se interrumpió. Se muestra la respuesta parcial recibida.</em></p>');
+                    }
+                    throw new Error('Error reading stream response');
                 }
-                // Final decode to handle any remaining bytes
-                const remaining = decoder.decode();
-                if (remaining) {
-                    fullResponse += remaining;
-                }
-                scheduleRender(true);
-            } catch (streamError) {
-                console.error('Stream reading error:', streamError);
-                throw new Error('Error reading stream response');
-            }
-        } else {
-            // Full JSON response handling
-            const data = await res.json();
-            if (!currentConversationId && data.conversation_id) {
-                currentConversationId = data.conversation_id;
+                // Refresh sidebar after streaming completes
                 await loadConversations();
+            } else {
+                // Full JSON response handling
+                const data = await res.json();
+                if (!currentConversationId && data.conversation_id) {
+                    currentConversationId = data.conversation_id;
+                    await loadConversations();
+                }
+                updateLastBotMessage(data.response, typingIndicator);
             }
-            updateLastBotMessage(data.response, typingIndicator);
+        } catch (err) {
+            if (err.message !== 'No autorizado') {
+                const errorMessage = 'Error: No se pudo obtener respuesta del servidor. Por favor, intente nuevamente.';
+                updateLastBotMessage(errorMessage, typingIndicator);
+                console.error('Chat error:', err);
+            }
+        } finally {
+            currentStreamController = null;
+            sendBtn.disabled = false;
+            chatInput.focus();
         }
-    } catch (err) {
-        if (err.message !== 'No autorizado') {
-            const errorMessage = 'Error: No se pudo obtener respuesta del servidor. Por favor, intente nuevamente.';
-            updateLastBotMessage(errorMessage, typingIndicator);
-            console.error('Chat error:', err);
-        }
-    } finally {
-        sendBtn.disabled = false;
-        chatInput.focus();
-    }
-});
+    });
 
 
     function buildMessageElement(text, role, isTyping = false) {
@@ -538,7 +580,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-        closeModalBtn.addEventListener('click', () => { 
+    closeModalBtn.addEventListener('click', () => { 
         previewModal.classList.remove('show'); 
         runnerFrame.srcdoc = ''; 
         currentPreviewCode = ''; 
