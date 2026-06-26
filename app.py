@@ -486,7 +486,7 @@ def auth_github_callback():
         hypothesisId="D",
     )
     try:
-        token = oauth.github.authorize_access_token(redirect_uri=_github_oauth_redirect_uri())
+        token = oauth.github.authorize_access_token()
         # GitHub no devuelve userinfo en el token; hay que pedirlo a la API
         resp = oauth.github.get('/user', token=token)
         user_info = resp.json() if resp else {}
