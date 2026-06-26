@@ -12,6 +12,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const forgotPasswordForm = document.getElementById('forgotPasswordForm');
     const forgotErrorMessage = document.getElementById('forgotErrorMessage');
     const forgotSuccessMessage = document.getElementById('forgotSuccessMessage');
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
 
     const projectDetailsModal = document.getElementById('projectDetailsModal');
     const closeProjectModalBtn = document.getElementById('closeProjectModalBtn');
@@ -38,6 +39,22 @@ document.addEventListener('DOMContentLoaded', function() {
         const u = String(url || '').trim();
         if (/^https?:\/\//i.test(u)) return u;
         return fallback;
+    }
+
+    function withCsrf(options = {}) {
+        const method = String(options.method || 'GET').toUpperCase();
+        if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+            return options;
+        }
+        const headers = new Headers(options.headers || {});
+        if (csrfToken) {
+            headers.set('X-CSRFToken', csrfToken);
+        }
+        return { ...options, headers };
+    }
+
+    function csrfFetch(url, options = {}) {
+        return fetch(url, withCsrf(options));
     }
 
     function isLikelyHtmlDocument(code) {
@@ -88,6 +105,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function resetProjectDetailsModal() {
         projectCodeBlock.textContent = '';
+        projectCodeBlock.className = '';
+        projectCodeBlock.removeAttribute('data-highlighted');
         projectPreviewFrame.removeAttribute('srcdoc');
         projectPreviewFrame.src = 'about:blank';
         projectDetailTabs.classList.remove('is-hidden');
@@ -162,7 +181,7 @@ document.addEventListener('DOMContentLoaded', function() {
         forgotSuccessMessage.style.display = 'none';
         const email = document.getElementById('forgotEmail').value.trim();
         try {
-            const res = await fetch('/forgot-password', {
+            const res = await csrfFetch('/forgot-password', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email })
@@ -280,24 +299,51 @@ document.addEventListener('DOMContentLoaded', function() {
             `;
             
             slide.querySelector('.view-project-btn').addEventListener('click', () => {
-                projectDetailsTitle.textContent = project.title;
-                const code = project.codeSnippet || "";
-                const canPreview = isLikelyHtmlDocument(code);
-                projectCodeBlock.textContent = code;
-                if (typeof hljs !== 'undefined' && hljs.highlightElement) {
-                    hljs.highlightElement(projectCodeBlock);
-                }
-                if (canPreview) {
-                    projectDetailTabs.classList.remove('is-hidden');
-                    setProjectPreviewSrcdoc(code);
-                    setProjectDetailTab('preview');
-                } else {
-                    projectDetailTabs.classList.add('is-hidden');
-                    projectPreviewFrame.removeAttribute('srcdoc');
-                    projectPreviewFrame.src = 'about:blank';
-                    setProjectDetailTab('code');
-                }
                 openModal('projectDetailsModal');
+                projectDetailsTitle.textContent = project.title || 'Proyecto';
+                projectDetailTabs.classList.add('is-hidden');
+                projectCodeBlock.textContent = 'Cargando código del proyecto...';
+                projectCodeBlock.className = '';
+                projectCodeBlock.removeAttribute('data-highlighted');
+                setProjectDetailTab('code');
+
+                (async () => {
+                    try {
+                        if (!project._id) {
+                            throw new Error('Proyecto sin ID');
+                        }
+                        const detailRes = await fetch(`/api/projects/${encodeURIComponent(project._id)}`);
+                        if (!detailRes.ok) {
+                            throw new Error(`Error del servidor: ${detailRes.status}`);
+                        }
+                        const detail = await detailRes.json();
+                        const code = detail.codeSnippet || "";
+                        const canPreview = isLikelyHtmlDocument(code);
+                        projectCodeBlock.textContent = code;
+                        projectCodeBlock.className = '';
+                        projectCodeBlock.removeAttribute('data-highlighted');
+                        if (typeof hljs !== 'undefined' && hljs.highlightElement) {
+                            hljs.highlightElement(projectCodeBlock);
+                        }
+                        if (canPreview) {
+                            projectDetailTabs.classList.remove('is-hidden');
+                            setProjectPreviewSrcdoc(code);
+                            setProjectDetailTab('preview');
+                        } else {
+                            projectDetailTabs.classList.add('is-hidden');
+                            projectPreviewFrame.removeAttribute('srcdoc');
+                            projectPreviewFrame.src = 'about:blank';
+                            setProjectDetailTab('code');
+                        }
+                    } catch (err) {
+                        console.error('Error cargando detalle del proyecto:', err);
+                        projectDetailTabs.classList.add('is-hidden');
+                        projectPreviewFrame.removeAttribute('srcdoc');
+                        projectPreviewFrame.src = 'about:blank';
+                        projectCodeBlock.textContent = 'No se pudo cargar el código del proyecto.';
+                        setProjectDetailTab('code');
+                    }
+                })();
             });
 
 
@@ -374,7 +420,7 @@ document.addEventListener('DOMContentLoaded', function() {
         submitBtn.disabled = true;
         submitBtn.textContent = 'Iniciando sesión...';
         try {
-            const res = await fetch('/login', {
+            const res = await csrfFetch('/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'same-origin',
@@ -413,7 +459,7 @@ document.addEventListener('DOMContentLoaded', function() {
         submitBtn.disabled = true;
         submitBtn.textContent = 'Creando cuenta...';
         try {
-            const res = await fetch('/register', {
+            const res = await csrfFetch('/register', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'same-origin',

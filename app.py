@@ -5,15 +5,44 @@ from model.model import WebDevAI
 from model.database import ChatDatabase
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.exceptions import RequestEntityTooLarge
 from functools import wraps
+from collections import defaultdict, deque
 import secrets
 import os
 import time
 import json
+import logging
 from datetime import timedelta
 from urllib.parse import urlparse
 from bson.objectid import ObjectId
 from bson.errors import InvalidId
+
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+
+def _env_flag(name, default=False):
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_int(name, default, min_value=None, max_value=None):
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    if min_value is not None:
+        value = max(min_value, value)
+    if max_value is not None:
+        value = min(max_value, value)
+    return value
 
 
 def _is_trusted_proxy_hosting():
@@ -33,6 +62,7 @@ def _is_production_like():
 
 
 app = Flask(__name__, template_folder='web/templates', static_folder='web/static')
+app.config["MAX_CONTENT_LENGTH"] = _env_int("MAX_UPLOAD_BYTES", 10 * 1024 * 1024, min_value=1)
 _secret_from_env = os.getenv("SECRET_KEY", "").strip()
 if _secret_from_env:
     app.secret_key = _secret_from_env
@@ -42,12 +72,9 @@ else:
 # Do not raise here: Vercel’s Flask discovery imports this module during build; a missing
 # SECRET_KEY at that moment would hide the ``app`` object and yield “No flask entrypoint found”.
 if not _secret_from_env and _is_production_like():
-    import sys
-
-    print(
+    logger.critical(
         "CRITICAL: SECRET_KEY is not set while FLASK_ENV=production or VERCEL=1. "
-        "Set SECRET_KEY in the project environment or sessions (login / /chat) will not work.",
-        file=sys.stderr,
+        "Set SECRET_KEY in the project environment or sessions (login / /chat) will not work."
     )
 
 if _is_trusted_proxy_hosting():
@@ -59,6 +86,7 @@ if _is_production_like():
 
 # region agent log
 _DEBUG_LOG_PATH = os.path.join(os.path.dirname(__file__), ".cursor", "debug.log")
+_APP_DEBUG_LOG_ENABLED = _env_flag("DEBUG_APP", False)
 
 
 def _debug_log_app(location, message, data=None, runId="debug", hypothesisId=None):
@@ -66,6 +94,8 @@ def _debug_log_app(location, message, data=None, runId="debug", hypothesisId=Non
     NDJSON logger for debug mode.
     IMPORTANT: never log secrets (passwords, tokens, full URIs with creds).
     """
+    if not _APP_DEBUG_LOG_ENABLED:
+        return
     try:
         payload = {
             "id": f"log_{int(time.time() * 1000)}_{secrets.token_hex(4)}",
@@ -114,6 +144,77 @@ CORS(app, origins=[o.strip() for o in allowed_origins], supports_credentials=Tru
 ai_model = WebDevAI()
 db = ChatDatabase()
 
+_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+_RATE_BUCKETS = defaultdict(deque)
+_RATE_LIMITS = {
+    "/login": (10, 60),
+    "/register": (5, 300),
+    "/forgot-password": (5, 300),
+    "/api/generate": (20, 3600),
+    "/api/generate-stream": (20, 3600),
+}
+
+
+def _normalize_email(email):
+    return (email or "").strip().lower()
+
+
+def _get_or_create_csrf_token():
+    token = session.get("_csrf_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session["_csrf_token"] = token
+    return token
+
+
+def _client_identifier():
+    forwarded_for = (request.headers.get("X-Forwarded-For") or "").split(",", 1)[0].strip()
+    return session.get("user_id") or forwarded_for or request.remote_addr or "unknown"
+
+
+@app.context_processor
+def _inject_template_security_values():
+    return {
+        "csrf_token": _get_or_create_csrf_token(),
+        "max_upload_bytes": app.config["MAX_CONTENT_LENGTH"],
+    }
+
+
+@app.before_request
+def _rate_limit_expensive_posts():
+    if request.method != "POST":
+        return None
+    limit_config = _RATE_LIMITS.get(request.path)
+    if not limit_config:
+        return None
+    max_requests, window_seconds = limit_config
+    now = time.monotonic()
+    key = (request.path, _client_identifier())
+    bucket = _RATE_BUCKETS[key]
+    while bucket and now - bucket[0] > window_seconds:
+        bucket.popleft()
+    if len(bucket) >= max_requests:
+        return jsonify({"error": "Demasiadas solicitudes. Intenta nuevamente más tarde."}), 429
+    bucket.append(now)
+    return None
+
+
+@app.before_request
+def _csrf_protect_session_posts():
+    if request.method in _SAFE_METHODS:
+        return None
+    expected = session.get("_csrf_token")
+    submitted = request.headers.get("X-CSRFToken") or request.form.get("csrf_token")
+    if not expected or not submitted or not secrets.compare_digest(expected, submitted):
+        return jsonify({"error": "Token CSRF inválido o ausente"}), 400
+    return None
+
+
+@app.errorhandler(RequestEntityTooLarge)
+def _handle_request_too_large(_error):
+    limit_mb = app.config["MAX_CONTENT_LENGTH"] / (1024 * 1024)
+    return jsonify({"error": f"El archivo excede el límite de {limit_mb:.1f} MB."}), 413
+
 
 def _no_store_redirect(location):
     """Auth-related redirects must not be cached at the edge (stale 302 → wrong page after login)."""
@@ -161,6 +262,8 @@ def _extract_request_data():
         if uploaded_file:
             try:
                 file_bytes = uploaded_file.read()
+                if len(file_bytes or b"") > app.config["MAX_CONTENT_LENGTH"]:
+                    raise RequestEntityTooLarge()
                 file_filename = uploaded_file.filename or "archivo"
                 file_mimetype = uploaded_file.mimetype or ""
                 if file_bytes is None:
@@ -170,7 +273,9 @@ def _extract_request_data():
                 else:
                     file_bytes = bytes(file_bytes)
             except Exception as e:
-                print(f"Error leyendo archivo adjunto en request: {e}")
+                if isinstance(e, RequestEntityTooLarge):
+                    raise
+                logger.warning("Error leyendo archivo adjunto en request: %s", e)
                 file_bytes = None
                 file_filename = None
                 file_mimetype = None
@@ -242,7 +347,7 @@ def chat():
 @app.route('/login', methods=['POST'])
 def login():
     data = request.get_json(silent=True) or {}
-    email = data.get('email')
+    email = _normalize_email(data.get('email'))
     password = data.get('password')
 
     if not email or not password:
@@ -255,7 +360,7 @@ def login():
         user = db.get_user_by_email(email)
     except Exception as e:
         # Fallback safety: never crash login on DB selection errors
-        print(f"Error en login (DB): {e}")
+        logger.exception("Error en login (DB): %s", e)
         return jsonify({"error": "Servicio no disponible. Intenta más tarde."}), 503
 
     if not user or not user.get('password'):
@@ -272,7 +377,7 @@ def login():
 @app.route('/register', methods=['POST'])
 def register():
     data = request.get_json(silent=True) or {}
-    email = data.get('email')
+    email = _normalize_email(data.get('email'))
     password = data.get('password')
 
     if not email or not password:
@@ -309,7 +414,7 @@ def logout():
 def forgot_password():
     """Recuperar contraseña: recibe email y responde siempre igual por seguridad."""
     data = request.get_json(silent=True) or {}
-    email = (data.get('email') or '').strip()
+    email = _normalize_email(data.get('email'))
     if not email:
         return jsonify({"error": "El email es requerido"}), 400
     # Por seguridad no revelamos si el email existe. Aquí podrías enviar un correo real con Flask-Mail.
@@ -425,7 +530,7 @@ def auth_github_callback():
         session.modified = True
         return _no_store_redirect(url_for('chat'))
     except Exception as e:
-        print(f"GitHub OAuth error: {e}")
+        logger.exception("GitHub OAuth error: %s", e)
         return _no_store_redirect(url_for('index') + '?error=oauth_failed')
 
 
@@ -446,14 +551,26 @@ def get_projects():
     """
     try:
         limit, offset = _parse_paging_args(default_limit=12, max_limit=100)
-        projects = db.get_all_projects(limit=limit + 1, skip=offset)
+        projects = db.get_all_projects(limit=limit + 1, skip=offset, include_code=False)
         has_more = len(projects) > limit
         projects = projects[:limit]
         # Devuelve los proyectos en un objeto JSON
         return jsonify({"projects": projects, "has_more": has_more, "limit": limit, "offset": offset})
     except Exception as e:
-        print(f"Error en /api/projects: {e}")
+        logger.exception("Error en /api/projects: %s", e)
         return jsonify({"error": "Error interno al obtener proyectos"}), 500
+
+
+@app.route('/api/projects/<project_id>', methods=['GET'])
+def get_project_detail(project_id):
+    try:
+        project = db.get_project_by_id(project_id, include_code=True)
+        if not project:
+            return jsonify({"error": "Proyecto no encontrado"}), 404
+        return jsonify(project)
+    except Exception as e:
+        logger.exception("Error en /api/projects/%s: %s", project_id, e)
+        return jsonify({"error": "Error interno al obtener el proyecto"}), 500
 
 
 # --- Rutas de la API de Chat (Protegidas) ---
@@ -552,7 +669,7 @@ def api_generate():
             "conversation_id": conversation_id_str
         })
     except Exception as e:
-        print(f"Error en la API: {e}")
+        logger.exception("Error en la API: %s", e)
         return jsonify({"error": "Error interno del servidor"}), 500
 
 @app.route('/api/generate-stream', methods=['POST'])
@@ -596,11 +713,11 @@ def api_generate_stream():
 
             db.save_message(conversation_id, 'bot', full_response)
         except Exception as e:
-            print(f"Error en streaming: {e}")
+            logger.exception("Error en streaming: %s", e)
             yield "Error: No se pudo completar la respuesta. Inténtalo de nuevo."
     
     return Response(generate(), mimetype='text/plain')
 
 if __name__ == '__main__':
     # Asegúrate de que 'host' sea '0.0.0.0' si necesitas acceder desde otros dispositivos en la red
-    app.run(debug=True, host='0.0.0.0', port=4000)
+    app.run(debug=_env_flag("FLASK_DEBUG", False), host='0.0.0.0', port=_env_int("PORT", 4000, min_value=1, max_value=65535))

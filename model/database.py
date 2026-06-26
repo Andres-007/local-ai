@@ -1,5 +1,5 @@
-from pymongo import MongoClient
-from pymongo.errors import ServerSelectionTimeoutError
+from pymongo import ASCENDING, DESCENDING, MongoClient
+from pymongo.errors import OperationFailure, ServerSelectionTimeoutError
 from datetime import datetime, timezone
 import os
 import sys
@@ -10,6 +10,7 @@ import json
 import time
 import secrets
 import socket
+import logging
 from bson.objectid import ObjectId
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -18,12 +19,42 @@ if ROOT_DIR not in sys.path:
 
 from config import Config  # Asumo que tienes tu URI de Mongo en config.py
 
+logger = logging.getLogger(__name__)
+
+
+def _env_flag(name, default=False):
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_int(name, default, min_value=None, max_value=None):
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    if min_value is not None:
+        value = max(min_value, value)
+    if max_value is not None:
+        value = min(max_value, value)
+    return value
+
+
+def _normalize_email(email):
+    return (email or "").strip().lower()
+
+
+DEBUG_MONGO = _env_flag("DEBUG_MONGO", False)
+
 
 def _debug_log(location, message, data=None, runId="pre-fix", hypothesisId=None):
     """
     Debug NDJSON logger for Cursor debug mode.
     IMPORTANT: never log secrets (passwords, tokens, full URIs with creds).
     """
+    if not DEBUG_MONGO:
+        return
     try:
         payload = {
             "id": f"log_{int(time.time() * 1000)}_{secrets.token_hex(4)}",
@@ -118,6 +149,22 @@ def _extract_seed_hosts(uri: str):
         return []
 
 
+def _should_try_srv_fallback(exc):
+    text = str(exc).lower()
+    return any(
+        marker in text
+        for marker in (
+            "dns",
+            "srv",
+            "resolution",
+            "resolve",
+            "name or service not known",
+            "temporary failure",
+            "query name does not exist",
+        )
+    )
+
+
 def _resolve_mongodb_srv_via_nslookup(uri):
     """
     Fallback: resuelve mongodb+srv usando nslookup (subprocess) cuando
@@ -200,25 +247,35 @@ class ChatDatabase:
                 hypothesisId="A",
             )
             # #endregion
-            # Timeouts algo más altos para elecciones de primary en Atlas; escrituras exigen primary.
+            diagnostic_defaults = DEBUG_MONGO
             client_options = {
-                "serverSelectionTimeoutMS": 60000,
-                "connectTimeoutMS": 30000,
-                "socketTimeoutMS": 45000,
+                "serverSelectionTimeoutMS": _env_int(
+                    "MONGODB_SERVER_SELECTION_TIMEOUT_MS",
+                    60000 if diagnostic_defaults else 15000,
+                    min_value=1000,
+                ),
+                "connectTimeoutMS": _env_int(
+                    "MONGODB_CONNECT_TIMEOUT_MS",
+                    30000 if diagnostic_defaults else 10000,
+                    min_value=1000,
+                ),
+                "socketTimeoutMS": _env_int(
+                    "MONGODB_SOCKET_TIMEOUT_MS",
+                    45000 if diagnostic_defaults else 20000,
+                    min_value=1000,
+                ),
                 "retryWrites": True,
                 "retryReads": True,
             }
             # Siempre intentar primero la URI canónica (mongodb+srv): descubrimiento correcto del primary.
             # El fallback nslookup solo si falla la conexión (p. ej. DNS en el entorno).
             parsed_uri = urllib.parse.urlparse(uri)
-            fallback_uri = _resolve_mongodb_srv_via_nslookup(uri) if parsed_uri.scheme == "mongodb+srv" else None
-            if parsed_uri.scheme == "mongodb+srv":
-                attempt_uris = [uri]
-                if fallback_uri:
-                    attempt_uris.append(fallback_uri)
-            else:
-                attempt_uris = [uri]
-            for attempt_uri in attempt_uris:
+            attempt_uris = [uri]
+            fallback_attempted = False
+            index = 0
+            while index < len(attempt_uris):
+                attempt_uri = attempt_uris[index]
+                index += 1
                 if not attempt_uri:
                     continue
                 try:
@@ -269,21 +326,22 @@ class ChatDatabase:
                     )
                     # #endregion
                     # #region agent log
-                    seed_hosts = _extract_seed_hosts(attempt_uri)
-                    if seed_hosts:
-                        checks = {h: _tcp_reachability(h, 27017, timeout_s=3.0) for h in seed_hosts[:5]}
-                    else:
-                        checks = {}
-                    _debug_log(
-                        location="model/database.py:ChatDatabase.__init__",
-                        message="Mongo seed host TCP reachability",
-                        data={
-                            "seed_hosts": seed_hosts,
-                            "checks": checks,
-                        },
-                        runId="pre-fix",
-                        hypothesisId="E",
-                    )
+                    if DEBUG_MONGO:
+                        seed_hosts = _extract_seed_hosts(attempt_uri)
+                        if seed_hosts:
+                            checks = {h: _tcp_reachability(h, 27017, timeout_s=3.0) for h in seed_hosts[:5]}
+                        else:
+                            checks = {}
+                        _debug_log(
+                            location="model/database.py:ChatDatabase.__init__",
+                            message="Mongo seed host TCP reachability",
+                            data={
+                                "seed_hosts": seed_hosts,
+                                "checks": checks,
+                            },
+                            runId="pre-fix",
+                            hypothesisId="E",
+                        )
                     # #endregion
                     self.has_primary = self._has_primary()
                     # #region agent log
@@ -300,9 +358,9 @@ class ChatDatabase:
                     # #endregion
                     self._ensure_indexes()
                     if attempt_uri != uri:
-                        print("Conexión exitosa a MongoDB (via resolución nslookup)")
+                        logger.info("Conexión exitosa a MongoDB (via resolución nslookup)")
                     else:
-                        print("Conexión exitosa a MongoDB")
+                        logger.info("Conexión exitosa a MongoDB")
                     return
                 except Exception as e:
                     last_error = e
@@ -319,12 +377,22 @@ class ChatDatabase:
                         hypothesisId="C",
                     )
                     # #endregion
-                    if "resolution lifetime" in str(e).lower() or "dns" in str(e).lower():
+                    if (
+                        parsed_uri.scheme == "mongodb+srv"
+                        and not fallback_attempted
+                        and _should_try_srv_fallback(e)
+                    ):
+                        fallback_attempted = True
+                        fallback_uri = _resolve_mongodb_srv_via_nslookup(uri)
+                        if fallback_uri:
+                            attempt_uris.append(fallback_uri)
+                            continue
+                    if _should_try_srv_fallback(e):
                         continue
                     break
             raise last_error
         except Exception as e:
-            print(f"Error al conectar con MongoDB: {e}")
+            logger.error("Error al conectar con MongoDB: %s", e)
             self.client = None
 
     def _has_primary(self) -> bool:
@@ -366,12 +434,21 @@ class ChatDatabase:
                 )
                 # #endregion
                 return
-            self.users.create_index('email')
-            self.conversations.create_index([('user_id', 1), ('updated_at', -1)])
-            self.messages.create_index([('conversation_id', 1), ('timestamp', 1)])
-            self.projects.create_index('created_at')
+            index_specs = (
+                (self.users, [('email', ASCENDING)], {"unique": True, "name": "email_unique"}),
+                (self.users, [('github_id', ASCENDING)], {"unique": True, "sparse": True, "name": "github_id_unique_sparse"}),
+                (self.users, [('google_id', ASCENDING)], {"unique": True, "sparse": True, "name": "google_id_unique_sparse"}),
+                (self.conversations, [('user_id', ASCENDING), ('updated_at', DESCENDING)], {"name": "user_updated_at"}),
+                (self.messages, [('conversation_id', ASCENDING), ('timestamp', ASCENDING)], {"name": "conversation_timestamp"}),
+                (self.projects, [('created_at', DESCENDING)], {"name": "created_at_desc"}),
+            )
+            for collection, keys, kwargs in index_specs:
+                try:
+                    collection.create_index(keys, **kwargs)
+                except OperationFailure as e:
+                    logger.warning("No se pudo crear índice %s.%s: %s", collection.name, kwargs.get("name", keys), e)
         except Exception as e:
-            print(f"Error al crear índices: {e}")
+            logger.warning("Error al crear índices: %s", e)
             # #region agent log
             _debug_log(
                 location="model/database.py:ChatDatabase._ensure_indexes",
@@ -388,7 +465,7 @@ class ChatDatabase:
 
     def _ensure_connection(self):
         if not self.client:
-            print("Error: MongoDB no conectado.")
+            logger.error("Error: MongoDB no conectado.")
             return False
         return True
 
@@ -399,8 +476,11 @@ class ChatDatabase:
         """
         if not self._ensure_connection():
             return None
+        email = _normalize_email(email)
+        if not email:
+            return None
         user_data = {
-            'email': email.lower(),
+            'email': email,
             'password': password_hash,
             'created_at': datetime.now(timezone.utc)
         }
@@ -411,8 +491,11 @@ class ChatDatabase:
         """Busca un usuario por su email."""
         if not self._ensure_connection():
             return None
+        email = _normalize_email(email)
+        if not email:
+            return None
         try:
-            return self.users.find_one({'email': email.lower()})
+            return self.users.find_one({'email': email})
         except ServerSelectionTimeoutError as e:
             # #region agent log
             _debug_log(
@@ -453,8 +536,11 @@ class ChatDatabase:
         """Crea un usuario vinculado a Google (sin contraseña local)."""
         if not self._ensure_connection():
             return None
+        email = _normalize_email(email)
+        if not email:
+            return None
         user_data = {
-            'email': email.lower(),
+            'email': email,
             'google_id': google_id,
             'name': name or '',
             'password': None,
@@ -486,8 +572,11 @@ class ChatDatabase:
         """Crea un usuario vinculado a GitHub (sin contraseña local)."""
         if not self._ensure_connection():
             return None
+        email = _normalize_email(email)
+        if not email:
+            return None
         user_data = {
-            'email': email.lower(),
+            'email': email,
             'github_id': github_id,
             'name': name or '',
             'password': None,
@@ -672,7 +761,7 @@ class ChatDatabase:
         result = self.projects.insert_one(project_data)
         return str(result.inserted_id)
 
-    def get_all_projects(self, limit=None, skip=0):
+    def get_all_projects(self, limit=None, skip=0, include_code=True):
         """
         Obtiene todos los proyectos de la base de datos, ordenados por fecha.
         """
@@ -680,7 +769,8 @@ class ChatDatabase:
             return []
         try:
             # Ordena por 'created_at' descendente para mostrar los más nuevos primero
-            query = self.projects.find().sort('created_at', -1)
+            projection = None if include_code else {'codeSnippet': 0}
+            query = self.projects.find({}, projection).sort('created_at', -1)
             if skip:
                 query = query.skip(skip)
             if limit is not None:
@@ -690,7 +780,7 @@ class ChatDatabase:
                 proj['_id'] = str(proj['_id']) # Convertir ObjectId a string para JSON
             return projects
         except Exception as e:
-            print(f"Error al obtener proyectos: {e}")
+            logger.warning("Error al obtener proyectos: %s", e)
             # #region agent log
             _debug_log(
                 location="model/database.py:ChatDatabase.get_all_projects",
@@ -705,3 +795,31 @@ class ChatDatabase:
             )
             # #endregion
             return []
+
+    def get_project_by_id(self, project_id, include_code=True):
+        """Obtiene un proyecto por ID. El código solo se incluye cuando se solicita explícitamente."""
+        if not self._ensure_connection():
+            return None
+        try:
+            projection = None if include_code else {'codeSnippet': 0}
+            project = self.projects.find_one({'_id': ObjectId(project_id)}, projection)
+            if not project:
+                return None
+            project['_id'] = str(project['_id'])
+            return project
+        except Exception as e:
+            logger.warning("Error al obtener proyecto %s: %s", project_id, e)
+            # #region agent log
+            _debug_log(
+                location="model/database.py:ChatDatabase.get_project_by_id",
+                message="Mongo read failed (get_project_by_id)",
+                data={
+                    "error_type": type(e).__name__,
+                    "error": str(e),
+                    "topology": str(getattr(self.client, "topology_description", "")) if getattr(self, "client", None) else None,
+                },
+                runId="pre-fix",
+                hypothesisId="B",
+            )
+            # #endregion
+            return None

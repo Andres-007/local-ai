@@ -22,11 +22,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const deleteModal = document.getElementById('delete-confirm-modal');
     const cancelDeleteBtn = document.getElementById('cancel-delete-btn');
     const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const maxUploadBytes = Number(document.querySelector('meta[name="max-upload-bytes"]')?.content || 0);
 
     let currentConversationId = null;
     let conversationToDeleteId = null;
     let currentPreviewCode = '';
     let currentStreamController = null;
+    let attachmentError = '';
     const conversationPaging = { limit: 30, offset: 0, hasMore: false, loading: false };
     const messagePaging = { limit: 50, offset: 0, hasMore: false, loading: false };
     
@@ -70,14 +73,50 @@ document.addEventListener('DOMContentLoaded', () => {
             .replace(/'/g, '&#39;');
     }
 
+    function formatFileSize(bytes) {
+        return bytes < 1024
+            ? `${bytes} B`
+            : bytes < 1024 * 1024
+                ? `${(bytes / 1024).toFixed(1)} KB`
+                : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    function withCsrf(options = {}) {
+        const method = String(options.method || 'GET').toUpperCase();
+        if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+            return options;
+        }
+        const headers = new Headers(options.headers || {});
+        if (csrfToken) {
+            headers.set('X-CSRFToken', csrfToken);
+        }
+        return { ...options, headers };
+    }
+
     function renderAttachmentPreview() {
+        if (attachmentError) {
+            attachmentsPreview.innerHTML = `
+                <div class="attachment-chip attachment-chip--error">
+                    <span class="attachment-name">${escapeHtml(attachmentError)}</span>
+                    <button type="button" class="attachment-remove" aria-label="Descartar error" title="Descartar error">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+            `;
+            attachmentsPreview.querySelector('.attachment-remove').addEventListener('click', (e) => {
+                e.preventDefault();
+                attachmentError = '';
+                renderAttachmentPreview();
+            });
+            return;
+        }
         const file = fileInput.files[0];
         if (!file) {
             attachmentsPreview.innerHTML = '';
             return;
         }
         const safeName = escapeHtml(file.name);
-        const size = file.size < 1024 ? `${file.size} B` : file.size < 1024 * 1024 ? `${(file.size / 1024).toFixed(1)} KB` : `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
+        const size = formatFileSize(file.size);
         attachmentsPreview.innerHTML = `
             <div class="attachment-chip">
                 <span class="attachment-icon">
@@ -92,18 +131,28 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
         attachmentsPreview.querySelector('.attachment-remove').addEventListener('click', (e) => {
             e.preventDefault();
+            attachmentError = '';
             fileInput.value = '';
             renderAttachmentPreview();
         });
     }
 
-    fileInput.addEventListener('change', renderAttachmentPreview);
+    fileInput.addEventListener('change', () => {
+        attachmentError = '';
+        const file = fileInput.files[0];
+        if (file && maxUploadBytes > 0 && file.size > maxUploadBytes) {
+            attachmentError = `El archivo supera el límite de ${formatFileSize(maxUploadBytes)}.`;
+            fileInput.value = '';
+        }
+        renderAttachmentPreview();
+    });
 
     newChatBtn.addEventListener('click', () => {
         currentConversationId = null;
         chatContainer.innerHTML = `<div class="empty-state"><div class="empty-state-icon">💬</div><h2>¿En qué puedo ayudarte hoy?</h2><p>Puedo ayudarte a crear, depurar y mejorar tu código web</p></div>`;
         document.querySelectorAll('.conversation-item').forEach(el => el.classList.remove('active'));
         fileInput.value = '';
+        attachmentError = '';
         renderAttachmentPreview();
         if (window.innerWidth < 768) closeSidebar();
     });
@@ -124,7 +173,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Helper para fetch que maneja errores de autenticación
     async function fetchApi(url, options = {}) {
-        const res = await fetch(url, options);
+        const res = await fetch(url, withCsrf(options));
         if (res.status === 401) {
             window.location.href = '/'; // Redirigir al login
             throw new Error('No autorizado');
@@ -290,6 +339,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const message = chatInput.value.trim();
         const file = fileInput.files[0];
         if (!message && !file) return;
+        if (file && maxUploadBytes > 0 && file.size > maxUploadBytes) {
+            attachmentError = `El archivo supera el límite de ${formatFileSize(maxUploadBytes)}.`;
+            fileInput.value = '';
+            renderAttachmentPreview();
+            return;
+        }
         
         if (chatContainer.querySelector('.empty-state')) {
             chatContainer.innerHTML = '';
@@ -300,6 +355,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const typingIndicator = appendMessage('<div class="typing-indicator"><span></span><span></span><span></span></div>', 'bot', true);
         chatInput.value = '';
         fileInput.value = '';
+        attachmentError = '';
         renderAttachmentPreview();
         autoResizeTextarea();
         sendBtn.disabled = true;
@@ -371,7 +427,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (renderTimeout) return;
                     renderTimeout = setTimeout(() => {
                         renderTimeout = null;
-                        content.innerHTML = md.render(fullResponse);
+                        content.textContent = fullResponse;
                         chatContainer.scrollTop = chatContainer.scrollHeight;
                     }, 250);
                 };

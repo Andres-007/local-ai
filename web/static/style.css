@@ -241,6 +241,7 @@ body { font-family: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", He
 .input-area { padding: 1.2rem; background: var(--bg-secondary); border-top: 1px solid var(--border); flex-shrink: 0; display: flex; flex-direction: column; gap: 0.8rem; min-height: 0; }
 .attachments-preview { max-width: 80rem; margin: 0 auto; width: 100%; display: flex; flex-wrap: wrap; gap: 0.8rem; min-height: 0; }
 .attachment-chip { display: inline-flex; align-items: center; gap: 0.6rem; padding: 0.6rem 1rem; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 0.8rem; font-size: 1.3rem; color: var(--text-primary); max-width: 100%; }
+.attachment-chip--error { border-color: rgba(218, 54, 51, 0.65); color: var(--danger-hover); background: rgba(218, 54, 51, 0.1); }
 .attachment-chip .attachment-icon { flex-shrink: 0; color: var(--accent); }
 .attachment-chip .attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 20rem; }
 .attachment-chip .attachment-size { font-size: 1.2rem; color: var(--text-secondary); flex-shrink: 0; }

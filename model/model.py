@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 import io
+import logging
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if ROOT_DIR not in sys.path:
@@ -10,11 +11,24 @@ if ROOT_DIR not in sys.path:
 
 from config import Config
 
+logger = logging.getLogger(__name__)
+
+def _env_int(name, default, min_value=None, max_value=None):
+	try:
+		value = int(os.getenv(name, str(default)))
+	except (TypeError, ValueError):
+		value = default
+	if min_value is not None:
+		value = max(min_value, value)
+	if max_value is not None:
+		value = min(max_value, value)
+	return value
+
 # Configura la API de Gemini con la clave obtenida desde la configuración
 try:
 	genai.configure(api_key=Config.GEMINI_API_KEY)
 except (AttributeError, TypeError) as exc:
-	print("Error: La clave de API de Gemini no se ha configurado. Asegúrate de crear un archivo .env con tu GEMINI_API_KEY.")
+	logger.error("La clave de API de Gemini no se ha configurado. Asegúrate de crear un archivo .env con tu GEMINI_API_KEY.")
 	# no re-raise to allow the module to be imported in environments without the key
 
 class WebDevAI:
@@ -29,7 +43,7 @@ class WebDevAI:
 			"temperature": 0.5,
 			"top_p": 1,
 			"top_k": 32,
-			"max_output_tokens": 32768,
+			"max_output_tokens": _env_int("GEMINI_MAX_OUTPUT_TOKENS", 8192, min_value=1024, max_value=32768),
 		}
 		safety_settings = [
 			{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
@@ -75,7 +89,7 @@ class WebDevAI:
 		)
 
 	# Máximo de mensajes de historial (Mongo) pasados a Gemini por petición
-	MAX_GEMINI_HISTORY_MESSAGES = 80
+	MAX_GEMINI_HISTORY_MESSAGES = _env_int("MAX_GEMINI_HISTORY_MESSAGES", 40, min_value=1, max_value=80)
 
 	def _normalize_history_for_gemini(self, db_messages):
 		"""Quita mensajes user finales sin respuesta model (turnos incompletos)."""
@@ -120,7 +134,7 @@ class WebDevAI:
 			chat.send_message(prompt)
 			return self._safe_last_text(chat)
 		except Exception as e:
-			print(f"Error al contactar: {e}")
+			logger.exception("Error al contactar con Gemini: %s", e)
 			return "Error: No se pudo obtener una respuesta del modelo. Verifica la conexión a internet."
 
 	# Extensiones de archivos de código/texto soportados
@@ -213,7 +227,7 @@ class WebDevAI:
 					continue
 			return raw.decode('utf-8', errors='replace') + truncated_note
 		except Exception as e:
-			print(f"Error leyendo archivo: {e}")
+			logger.exception("Error leyendo archivo: %s", e)
 			raise
 
 	def _read_pdf_content(self, file_storage):
@@ -224,7 +238,7 @@ class WebDevAI:
 			except ImportError:
 				from PyPDF2 import PdfReader
 		except ImportError as e:
-			print(f"Error: instala pypdf con 'pip install pypdf': {e}")
+			logger.exception("Error: instala pypdf con 'pip install pypdf': %s", e)
 			raise
 		try:
 			if hasattr(file_storage, 'seek'):
@@ -247,7 +261,7 @@ class WebDevAI:
 					pass
 			return "\n\n".join(parts) if parts else ""
 		except Exception as e:
-			print(f"Error leyendo PDF: {e}")
+			logger.exception("Error leyendo PDF: %s", e)
 			raise
 
 	def _read_file_storage_once(self, file_storage):
@@ -266,7 +280,7 @@ class WebDevAI:
 				raw = raw.encode('utf-8', errors='replace')
 			return bytes(raw) if not isinstance(raw, bytes) else raw
 		except Exception as e:
-			print(f"Error leyendo archivo adjunto (una vez): {e}")
+			logger.exception("Error leyendo archivo adjunto (una vez): %s", e)
 			return None
 
 	def _wrap_bytes_as_file_like(self, raw_bytes, filename, mimetype):
@@ -296,7 +310,7 @@ class WebDevAI:
 				return self._read_file_content(file_storage)
 			return self._read_file_content(file_storage)
 		except Exception as e:
-			print(f"Error en _get_readable_content ({filename}): {e}")
+			logger.exception("Error en _get_readable_content (%s): %s", filename, e)
 			return None
 
 	def generate_with_file(self, prompt, file_storage=None, file_bytes=None, filename=None, mimetype=None, history_messages=None):
@@ -342,7 +356,7 @@ class WebDevAI:
 					chat.send_message(combined_prompt)
 					return self._safe_last_text(chat)
 				except Exception as e2:
-					print(f"Error leyendo archivo de código ({filename}): {e2}")
+					logger.exception("Error leyendo archivo de código (%s): %s", filename, e2)
 					return f"No se pudo leer el archivo {filename}. Comprueba que no esté dañado. Detalle: {e2}"
 
 			tmp_path = None
@@ -365,7 +379,7 @@ class WebDevAI:
 					except FileNotFoundError:
 						pass
 		except Exception as e:
-			print(f"Error al contactar con archivo: {e}")
+			logger.exception("Error al contactar con archivo: %s", e)
 			err_msg = str(e).strip() if e else ""
 			if "pypdf" in err_msg.lower() or "PyPDF" in err_msg or "pdf" in err_msg.lower():
 				return "Error al leer el PDF. Asegúrate de tener instalado: pip install pypdf"
@@ -389,7 +403,7 @@ class WebDevAI:
 				if getattr(chunk, "text", None):
 					yield chunk.text
 		except Exception as e:
-			print(f"Error al contactar (streaming): {e}")
+			logger.exception("Error al contactar con Gemini (streaming): %s", e)
 			yield "Error: No se pudo obtener una respuesta del modelo. Verifica la conexión a internet."
 
 	def generate_stream_with_file(self, prompt, file_storage=None, file_bytes=None, filename=None, mimetype=None, history_messages=None):
@@ -445,7 +459,7 @@ class WebDevAI:
 							yield chunk.text
 					return
 				except Exception as e2:
-					print(f"Error leyendo archivo de código ({filename}): {e2}")
+					logger.exception("Error leyendo archivo de código (%s): %s", filename, e2)
 					yield f"No se pudo leer el archivo {filename}. Comprueba que no esté dañado. Detalle: {e2}"
 					return
 
@@ -472,7 +486,7 @@ class WebDevAI:
 					except FileNotFoundError:
 						pass
 		except Exception as e:
-			print(f"Error al contactar con archivo (streaming): {e}")
+			logger.exception("Error al contactar con archivo (streaming): %s", e)
 			err_msg = str(e).strip() if e else ""
 			if "pypdf" in err_msg.lower() or "PyPDF" in err_msg or "pdf" in err_msg.lower():
 				yield "Error al leer el PDF. Asegúrate de tener instalado: pip install pypdf"
