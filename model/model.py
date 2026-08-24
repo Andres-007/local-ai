@@ -103,8 +103,8 @@ Tu propósito es diseñar, generar, auditar, refactorizar y explicar código de 
 			system_instruction=system_instruction
 		)
 
-	# Máximo de mensajes de historial (Mongo) pasados a Gemini por petición
-	MAX_GEMINI_HISTORY_MESSAGES = _env_int("MAX_GEMINI_HISTORY_MESSAGES", 40, min_value=1, max_value=80)
+	# Máximo de mensajes de historial (Mongo) pasados a Gemini por petición (optimizado a 16 para velocidad)
+	MAX_GEMINI_HISTORY_MESSAGES = _env_int("MAX_GEMINI_HISTORY_MESSAGES", 16, min_value=1, max_value=80)
 
 	def _normalize_history_for_gemini(self, db_messages):
 		"""Quita mensajes user finales sin respuesta model (turnos incompletos)."""
@@ -150,7 +150,12 @@ Tu propósito es diseñar, generar, auditar, refactorizar y explicar código de 
 			return self._safe_last_text(chat)
 		except Exception as e:
 			logger.exception("Error al contactar con Gemini: %s", e)
-			return "Error: No se pudo obtener una respuesta del modelo. Verifica la conexión a internet."
+			err_str = str(e)
+			if "API_KEY_INVALID" in err_str or "API key not valid" in err_str or "DefaultCredentialsError" in err_str:
+				return "Error: Clave de API de Gemini no válida o ausente. Revisa tu GEMINI_API_KEY."
+			elif "404" in err_str or "not found" in err_str.lower():
+				return f"Error: Modelo no encontrado ({getattr(Config, 'GEMINI_MODEL_NAME', '')}). Verifica el nombre del modelo."
+			return f"Error: No se pudo obtener una respuesta del modelo. Detalle: {e}"
 
 	# Extensiones de archivos de código/texto soportados
 	TEXT_EXTENSIONS = frozenset({
@@ -419,7 +424,13 @@ Tu propósito es diseñar, generar, auditar, refactorizar y explicar código de 
 					yield chunk.text
 		except Exception as e:
 			logger.exception("Error al contactar con Gemini (streaming): %s", e)
-			yield "Error: No se pudo obtener una respuesta del modelo. Verifica la conexión a internet."
+			err_str = str(e)
+			if "API_KEY_INVALID" in err_str or "API key not valid" in err_str or "DefaultCredentialsError" in err_str:
+				yield "Error: Clave de API de Gemini no válida o ausente. Revisa tu GEMINI_API_KEY."
+			elif "404" in err_str or "not found" in err_str.lower():
+				yield f"Error: Modelo no encontrado ({getattr(Config, 'GEMINI_MODEL_NAME', '')}). Verifica el nombre del modelo."
+			else:
+				yield f"Error: No se pudo obtener respuesta del modelo ({e})."
 
 	def generate_stream_with_file(self, prompt, file_storage=None, file_bytes=None, filename=None, mimetype=None, history_messages=None):
 		try:

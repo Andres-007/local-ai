@@ -14,7 +14,7 @@ class Config:
 	Clase de configuración para gestionar las variables de entorno
 	"""
 	# API de Gemini
-	GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+	GEMINI_API_KEY = os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_API_KEY')
 	GEMINI_MODEL_NAME = os.getenv('GEMINI_MODEL_NAME', 'gemini-3.6-flash')
 	
 	# MongoDB - URI válida por defecto para desarrollo local
@@ -24,7 +24,7 @@ class Config:
 	
 	# Verificación de variables
 	if not GEMINI_API_KEY:
-		logger.warning("GEMINI_API_KEY no encontrada. Añade GEMINI_API_KEY=tu_clave_aqui en tu archivo .env.")
+		logger.warning("GEMINI_API_KEY/GOOGLE_API_KEY no encontrada. Añade GEMINI_API_KEY=tu_clave_aqui en tu archivo .env.")
 
 	if not MONGODB_URI:
 		logger.warning("MONGODB_URI no encontrada. Usa mongodb://localhost:PORT/ o una URI de Atlas mongodb+srv://...")

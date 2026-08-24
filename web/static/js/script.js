@@ -422,11 +422,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 throw new Error(`HTTP error! status: ${res.status}`);
             }
 
-            if (res.headers.get("content-type")?.includes("text/plain")) {
+            const contentType = res.headers.get("content-type") || "";
+            const isStreamResponse = contentType.includes("text/plain") || contentType.includes("text/event-stream") || contentType.includes("octet-stream") || Boolean(res.body);
+
+            if (isStreamResponse && res.body) {
                 // Streaming response handling
-                if (!res.body) {
-                    throw new Error('Response body is null');
-                }
                 const reader = res.body.getReader();
                 const decoder = new TextDecoder();
                 let fullResponse = '';
@@ -435,25 +435,29 @@ document.addEventListener('DOMContentLoaded', () => {
                     throw new Error('Message content not found');
                 }
                 content.innerHTML = '';
-                let renderTimeout = null;
+                let renderAnimationFrame = null;
 
                 const scheduleRender = (final = false) => {
                     if (final) {
-                        if (renderTimeout) {
-                            clearTimeout(renderTimeout);
-                            renderTimeout = null;
+                        if (renderAnimationFrame) {
+                            cancelAnimationFrame(renderAnimationFrame);
+                            renderAnimationFrame = null;
                         }
                         content.innerHTML = md.render(fullResponse);
                         addPreviewButton(content);
                         chatContainer.scrollTop = chatContainer.scrollHeight;
                         return;
                     }
-                    if (renderTimeout) return;
-                    renderTimeout = setTimeout(() => {
-                        renderTimeout = null;
-                        content.textContent = fullResponse;
+                    if (renderAnimationFrame) return;
+                    renderAnimationFrame = requestAnimationFrame(() => {
+                        renderAnimationFrame = null;
+                        try {
+                            content.innerHTML = md.render(fullResponse);
+                        } catch (_) {
+                            content.textContent = fullResponse;
+                        }
                         chatContainer.scrollTop = chatContainer.scrollHeight;
-                    }, 250);
+                    });
                 };
 
                 try {

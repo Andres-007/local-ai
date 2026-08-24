@@ -658,7 +658,11 @@ def api_generate_stream():
             logger.exception("Error en streaming: %s", e)
             yield "Error: No se pudo completar la respuesta. Inténtalo de nuevo."
     
-    return Response(generate(), mimetype='text/plain')
+    res = Response(generate(), mimetype='text/plain; charset=utf-8')
+    res.headers['X-Accel-Buffering'] = 'no'
+    res.headers['Cache-Control'] = 'no-cache, no-transform'
+    res.headers['Connection'] = 'keep-alive'
+    return res
 
 
 if __name__ == '__main__':

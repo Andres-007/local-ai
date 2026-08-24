@@ -100,9 +100,9 @@ class ChatDatabase:
                 raise ValueError("URI inválida: debe comenzar con 'mongodb://' o 'mongodb+srv://'.")
             
             client_options = {
-                "serverSelectionTimeoutMS": _env_int("MONGODB_SERVER_SELECTION_TIMEOUT_MS", 15000, min_value=1000),
-                "connectTimeoutMS": _env_int("MONGODB_CONNECT_TIMEOUT_MS", 10000, min_value=1000),
-                "socketTimeoutMS": _env_int("MONGODB_SOCKET_TIMEOUT_MS", 20000, min_value=1000),
+                "serverSelectionTimeoutMS": _env_int("MONGODB_SERVER_SELECTION_TIMEOUT_MS", 5000, min_value=1000),
+                "connectTimeoutMS": _env_int("MONGODB_CONNECT_TIMEOUT_MS", 5000, min_value=1000),
+                "socketTimeoutMS": _env_int("MONGODB_SOCKET_TIMEOUT_MS", 10000, min_value=1000),
                 "retryWrites": True,
                 "retryReads": True,
             }
