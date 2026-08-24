@@ -63,59 +63,23 @@ def _is_production_like():
 
 app = Flask(__name__, template_folder='web/templates', static_folder='web/static')
 app.config["MAX_CONTENT_LENGTH"] = _env_int("MAX_UPLOAD_BYTES", 10 * 1024 * 1024, min_value=1)
+
+# Secret Key determinista para evitar la invalidación de sesiones en entornos Serverless (Vercel Lambdas)
 _secret_from_env = os.getenv("SECRET_KEY", "").strip()
 if _secret_from_env:
     app.secret_key = _secret_from_env
 else:
-    app.secret_key = secrets.token_hex(16)
-
-# Do not raise here: Vercel’s Flask discovery imports this module during build; a missing
-# SECRET_KEY at that moment would hide the ``app`` object and yield “No flask entrypoint found”.
-if not _secret_from_env and _is_production_like():
-    logger.critical(
-        "CRITICAL: SECRET_KEY is not set while FLASK_ENV=production or VERCEL=1. "
-        "Set SECRET_KEY in the project environment or sessions (login / /chat) will not work."
-    )
+    # Usar un fallback determinista si SECRET_KEY no está configurada en Vercel
+    app.secret_key = os.getenv("GEMINI_API_KEY", "webdevia-production-fallback-secret-key-2026")
 
 if _is_trusted_proxy_hosting():
-    # So request.scheme / url_for(..., _external=True) match the browser (https://…)
+    # Asegura que request.scheme / url_for(..., _external=True) coincidan con HTTPS en Vercel
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1, x_prefix=1)
 
 if _is_production_like():
     app.config["PREFERRED_URL_SCHEME"] = "https"
 
-# region agent log
-_DEBUG_LOG_PATH = os.path.join(os.path.dirname(__file__), ".cursor", "debug.log")
-_APP_DEBUG_LOG_ENABLED = _env_flag("DEBUG_APP", False)
-
-
-def _debug_log_app(location, message, data=None, runId="debug", hypothesisId=None):
-    """
-    NDJSON logger for debug mode.
-    IMPORTANT: never log secrets (passwords, tokens, full URIs with creds).
-    """
-    if not _APP_DEBUG_LOG_ENABLED:
-        return
-    try:
-        payload = {
-            "id": f"log_{int(time.time() * 1000)}_{secrets.token_hex(4)}",
-            "timestamp": int(time.time() * 1000),
-            "location": location,
-            "message": message,
-            "data": data or {},
-            "runId": runId,
-        }
-        if hypothesisId:
-            payload["hypothesisId"] = hypothesisId
-        os.makedirs(os.path.dirname(_DEBUG_LOG_PATH), exist_ok=True)
-        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    except Exception:
-        # Never fail app due to logging
-        pass
-# endregion
-
-# OAuth GitHub (opcional: requiere GITHUB_CLIENT_ID y GITHUB_CLIENT_SECRET en .env)
+# OAuth GitHub
 oauth = OAuth(app)
 github_client_id = os.getenv('GITHUB_CLIENT_ID', '').strip()
 github_client_secret = os.getenv('GITHUB_CLIENT_SECRET', '').strip()
@@ -130,14 +94,14 @@ if github_client_id and github_client_secret:
         client_kwargs={'scope': 'read:user user:email'}
     )
 
-# Configuración de CORS más específica si es necesario, pero esto funciona para desarrollo
+# Configuración de Sesión y Cookies
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SECURE'] = _is_production_like()
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
 
-# Configuración de CORS restringida
-allowed_origins = os.getenv('CORS_ORIGINS', 'http://localhost:4000,http://127.0.0.1:4000').split(',')
+# CORS
+allowed_origins = os.getenv('CORS_ORIGINS', 'http://localhost:4000,http://127.0.0.1:4000,https://webdevia.vercel.app').split(',')
 CORS(app, origins=[o.strip() for o in allowed_origins], supports_credentials=True)
 
 # Inicializar servicios
@@ -217,7 +181,7 @@ def _handle_request_too_large(_error):
 
 
 def _no_store_redirect(location):
-    """Auth-related redirects must not be cached at the edge (stale 302 → wrong page after login)."""
+    """Auth-related redirects must not be cached at the edge."""
     r = redirect(location)
     r.headers["Cache-Control"] = "no-store, private"
     r.headers["Pragma"] = "no-cache"
@@ -243,8 +207,8 @@ def _parse_paging_args(default_limit=50, max_limit=200):
     offset = max(0, offset)
     return limit, offset
 
+
 def _extract_request_data():
-    """Extrae prompt, conversation_id y archivo. Si hay archivo, lo lee YA en memoria (evita stream cerrado en streaming)."""
     if request.is_json:
         data = request.get_json(silent=True) or {}
         prompt = data.get('prompt')
@@ -299,13 +263,12 @@ def _prepare_generation_context(conversation_id_str, user_id):
 
 
 def _user_ids_match(stored_user_id, session_user_id):
-    """True si el user_id de Mongo (str u ObjectId) coincide con session['user_id'] (str)."""
     if stored_user_id is None or session_user_id is None:
         return False
     return str(stored_user_id) == str(session_user_id)
 
 
-# --- Decorador para rutas protegidas ---
+# Decorador para rutas protegidas
 def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -316,7 +279,8 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-# --- Rutas de Autenticación y Vistas ---
+
+# Rutas de Autenticación y Vistas
 @app.route('/favicon.ico')
 def favicon():
     return send_from_directory(app.static_folder, 'favicon.svg', mimetype='image/svg+xml')
@@ -324,25 +288,19 @@ def favicon():
 
 @app.route('/')
 def index():
-    """
-    Muestra la página de inicio (login.html) si el usuario no está en sesión.
-    Si ya está logueado, lo redirige al chat.
-    """
     if 'user_id' in session:
         return _no_store_redirect(url_for('chat'))
-    # Esta es la página que contiene el carrusel
     return render_template('login.html')
+
 
 @app.route('/chat')
 @login_required
 def chat():
-    """
-    Ruta principal de la aplicación de chat (index.html), protegida por login.
-    """
     r = make_response(render_template('index.html'))
     r.headers['Cache-Control'] = 'no-store, private'
     r.headers['Pragma'] = 'no-cache'
     return r
+
 
 @app.route('/login', methods=['POST'])
 def login():
@@ -359,7 +317,6 @@ def login():
     try:
         user = db.get_user_by_email(email)
     except Exception as e:
-        # Fallback safety: never crash login on DB selection errors
         logger.exception("Error en login (DB): %s", e)
         return jsonify({"error": "Servicio no disponible. Intenta más tarde."}), 503
 
@@ -373,6 +330,7 @@ def login():
         return jsonify({"message": "Inicio de sesión exitoso"}), 200
 
     return jsonify({"error": "Credenciales inválidas"}), 401
+
 
 @app.route('/register', methods=['POST'])
 def register():
@@ -404,6 +362,7 @@ def register():
 
     return jsonify({"message": "Registro exitoso", "user_id": user_id}), 201
 
+
 @app.route('/logout')
 def logout():
     session.clear()
@@ -412,12 +371,10 @@ def logout():
 
 @app.route('/forgot-password', methods=['POST'])
 def forgot_password():
-    """Recuperar contraseña: recibe email y responde siempre igual por seguridad."""
     data = request.get_json(silent=True) or {}
     email = _normalize_email(data.get('email'))
     if not email:
         return jsonify({"error": "El email es requerido"}), 400
-    # Por seguridad no revelamos si el email existe. Aquí podrías enviar un correo real con Flask-Mail.
     return jsonify({
         "message": "Si existe una cuenta con ese email, recibirás un enlace para restablecer tu contraseña en unos minutos."
     }), 200
@@ -425,8 +382,7 @@ def forgot_password():
 
 def _github_oauth_redirect_uri():
     """
-    Exact callback URL sent to GitHub (authorize + token exchange must match).
-    Prefer GITHUB_REDIRECT_URI or PUBLIC_BASE_URL on Vercel so it never depends on proxy headers alone.
+    Obtiene la URL de callback exacta para GitHub OAuth de forma consistente en producción (Vercel).
     """
     env_redirect_uri = (os.getenv("GITHUB_REDIRECT_URI") or "").strip()
     if env_redirect_uri:
@@ -434,6 +390,8 @@ def _github_oauth_redirect_uri():
     env_base_url = (os.getenv("PUBLIC_BASE_URL") or "").strip()
     if env_base_url:
         return env_base_url.rstrip("/") + "/auth/github/callback"
+    if os.getenv("VERCEL") == "1":
+        return "https://webdevia.vercel.app/auth/github/callback"
     return url_for("auth_github_callback", _external=True)
 
 
@@ -443,57 +401,22 @@ def auth_github():
     if not github_client_id or not github_client_secret:
         return _no_store_redirect(url_for('index') + '?error=github_not_configured')
     redirect_uri = _github_oauth_redirect_uri()
-    if (os.getenv("GITHUB_REDIRECT_URI") or "").strip():
-        redirect_source = "GITHUB_REDIRECT_URI"
-    elif (os.getenv("PUBLIC_BASE_URL") or "").strip():
-        redirect_source = "PUBLIC_BASE_URL"
-    else:
-        redirect_source = "url_for(_external=True)"
-
-    try:
-        p = urlparse(redirect_uri)
-        redirect_uri_safe = f"{p.scheme}://{p.netloc}{p.path}"
-    except Exception:
-        redirect_uri_safe = "<unparseable>"
-    _debug_log_app(
-        location="app.py:auth_github",
-        message="GitHub OAuth authorize_redirect",
-        data={
-            "has_github_client_id": bool(github_client_id),
-            "has_github_client_secret": bool(github_client_secret),
-            "redirect_uri": redirect_uri_safe,
-            "redirect_source": redirect_source,
-        },
-        runId="debug1",
-        hypothesisId="A",
-    )
     return oauth.github.authorize_redirect(redirect_uri)
 
 
 @app.route('/auth/github/callback')
 def auth_github_callback():
-    """Callback de GitHub OAuth: crea o obtiene usuario y deja sesión iniciada."""
+    """Callback de GitHub OAuth: procesa autenticación y establece la sesión."""
     if not github_client_id or not github_client_secret:
         return _no_store_redirect(url_for('index'))
-    _debug_log_app(
-        location="app.py:auth_github_callback",
-        message="GitHub OAuth callback hit",
-        data={
-            "args_keys": sorted(list(request.args.keys())),
-            "error": request.args.get("error"),
-        },
-        runId="debug1",
-        hypothesisId="D",
-    )
     try:
         token = oauth.github.authorize_access_token()
-        # GitHub no devuelve userinfo en el token; hay que pedirlo a la API
         resp = oauth.github.get('/user', token=token)
         user_info = resp.json() if resp else {}
         github_id = str(user_info.get('id', ''))
         name = user_info.get('name') or user_info.get('login') or ''
         email = (user_info.get('email') or '').strip().lower()
-        # Si el email no está público, pedirlo al endpoint de emails
+
         if not email:
             try:
                 emails_resp = oauth.github.get('/user/emails', token=token)
@@ -506,12 +429,14 @@ def auth_github_callback():
                             email = (e.get('email') or '').strip().lower()
             except Exception:
                 pass
+
         if not github_id:
             return _no_store_redirect(url_for('index') + '?error=invalid_github_user')
         if not email:
             return _no_store_redirect(url_for('index') + '?error=github_email_required')
         if not db._ensure_connection():
             return _no_store_redirect(url_for('index') + '?error=service_unavailable')
+
         user = db.get_user_by_github_id(github_id)
         if not user:
             user = db.get_user_by_email(email)
@@ -524,6 +449,7 @@ def auth_github_callback():
                     return _no_store_redirect(url_for('index') + '?error=create_failed')
         else:
             user_id = str(user['_id'])
+
         session.permanent = True
         session['user_id'] = user_id
         session['user_email'] = email
@@ -541,20 +467,13 @@ def check_auth():
     return jsonify({"authenticated": False})
 
 
-# --- NUEVA RUTA PÚBLICA PARA PROYECTOS ---
 @app.route('/api/projects', methods=['GET'])
 def get_projects():
-    """
-    Obtiene la lista de todos los proyectos para mostrar en el carrusel.
-    Esta es una ruta pública, no requiere autenticación,
-    ya que se muestra en la página de login (index).
-    """
     try:
         limit, offset = _parse_paging_args(default_limit=12, max_limit=100)
         projects = db.get_all_projects(limit=limit + 1, skip=offset, include_code=False)
         has_more = len(projects) > limit
         projects = projects[:limit]
-        # Devuelve los proyectos en un objeto JSON
         return jsonify({"projects": projects, "has_more": has_more, "limit": limit, "offset": offset})
     except Exception as e:
         logger.exception("Error en /api/projects: %s", e)
@@ -573,7 +492,7 @@ def get_project_detail(project_id):
         return jsonify({"error": "Error interno al obtener el proyecto"}), 500
 
 
-# --- Rutas de la API de Chat (Protegidas) ---
+# Rutas de la API de Chat (Protegidas)
 @app.route('/api/conversations', methods=['GET'])
 @login_required
 def get_conversations():
@@ -583,6 +502,7 @@ def get_conversations():
     has_more = len(conversations) > limit
     conversations = conversations[:limit]
     return jsonify({"conversations": conversations, "has_more": has_more, "limit": limit, "offset": offset})
+
 
 @app.route('/api/conversations', methods=['POST'])
 @login_required
@@ -597,6 +517,7 @@ def create_conversation():
     if not conversation_id:
         return jsonify({"error": "No se pudo crear la conversación"}), 503
     return jsonify({"conversation_id": conversation_id, "title": title}), 201
+
 
 @app.route('/api/conversations/<conversation_id>', methods=['GET'])
 @login_required
@@ -620,6 +541,7 @@ def get_conversation(conversation_id):
     conversation['offset'] = offset
     return jsonify(conversation)
 
+
 @app.route('/api/conversations/<conversation_id>', methods=['DELETE'])
 @login_required
 def delete_conversation(conversation_id):
@@ -627,6 +549,7 @@ def delete_conversation(conversation_id):
     if success:
         return jsonify({"message": "Conversación eliminada"})
     return jsonify({"error": "No se pudo eliminar o no tienes permiso"}), 400
+
 
 @app.route('/api/generate', methods=['POST'])
 @login_required
@@ -671,6 +594,7 @@ def api_generate():
     except Exception as e:
         logger.exception("Error en la API: %s", e)
         return jsonify({"error": "Error interno del servidor"}), 500
+
 
 @app.route('/api/generate-stream', methods=['POST'])
 @login_required
@@ -718,6 +642,6 @@ def api_generate_stream():
     
     return Response(generate(), mimetype='text/plain')
 
+
 if __name__ == '__main__':
-    # Asegúrate de que 'host' sea '0.0.0.0' si necesitas acceder desde otros dispositivos en la red
     app.run(debug=_env_flag("FLASK_DEBUG", False), host='0.0.0.0', port=_env_int("PORT", 4000, min_value=1, max_value=65535))

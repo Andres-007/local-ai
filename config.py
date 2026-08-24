@@ -15,6 +15,7 @@ class Config:
 	"""
 	# API de Gemini
 	GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+	GEMINI_MODEL_NAME = os.getenv('GEMINI_MODEL_NAME', 'gemini-3.6-flash')
 	
 	# MongoDB - URI válida por defecto para desarrollo local
 	MONGODB_URI = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/')
