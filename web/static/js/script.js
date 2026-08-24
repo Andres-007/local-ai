@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const sidebar = document.getElementById('sidebar');
     const toggleBtn = document.getElementById('toggle-sidebar');
+    const closeSidebarBtn = document.getElementById('close-sidebar-btn');
     const newChatBtn = document.getElementById('new-chat-btn');
     const conversationsList = document.getElementById('conversations-list');
     const chatContainer = document.getElementById('chat-container');
@@ -54,8 +55,15 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    if (closeSidebarBtn) {
+        closeSidebarBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeSidebar();
+        });
+    }
+
     // En móviles el historial no se quita haciendo clic en el fondo/overlay,
-    // únicamente se cierra al seleccionar una conversación.
+    // se cierra al seleccionar una conversación o al pulsar el botón X.
     sidebarOverlay.addEventListener('click', (e) => {
         if (window.innerWidth >= 768) {
             closeSidebar();

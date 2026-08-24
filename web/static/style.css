@@ -53,9 +53,10 @@ body { font-family: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", He
 .sidebar-overlay.active { opacity: 1; visibility: visible; transition: opacity var(--duration-normal) var(--ease-out); }
 .sidebar { width: 28rem; max-width: 85%; background: var(--bg-sidebar); border-right: none; display: flex; flex-direction: column; position: fixed; top: 0; left: 0; height: 100%; z-index: 1001; transform: translateX(-100%); transition: transform var(--duration-normal) var(--ease-out-expo); }
 .sidebar.open { transform: translateX(0); box-shadow: 2px 0 20px rgba(0, 0, 0, 0.4); }
-.sidebar-header { padding: 1.6rem 1.2rem 0.8rem 1.2rem; }
-.sidebar-divider { height: 1px; background: var(--border); margin: 0.4rem 1.2rem; flex-shrink: 0; }
-.new-chat-btn { width: 100%; padding: 1rem 1.6rem; background: var(--accent); border: none; border-radius: 0.8rem; color: white; font-size: 1.4rem; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 0.8rem; justify-content: center; transition: background var(--duration-fast), transform var(--duration-fast); min-height: 4.4rem; }
+.sidebar-header { padding: 1.6rem 1.2rem 0.8rem 1.2rem; display: flex; align-items: center; gap: 0.8rem; }
+.close-sidebar-btn { display: none; padding: 0.8rem; background: none; border: none; color: var(--text-primary); cursor: pointer; border-radius: 0.6rem; align-items: center; justify-content: center; min-width: 4rem; min-height: 4rem; transition: background var(--duration-fast); }
+.close-sidebar-btn:hover { background: var(--bg-tertiary); }
+.new-chat-btn { flex-grow: 1; padding: 1rem 1.6rem; background: var(--accent); border: none; border-radius: 0.8rem; color: white; font-size: 1.4rem; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 0.8rem; justify-content: center; transition: background var(--duration-fast), transform var(--duration-fast); min-height: 4.4rem; }
 .new-chat-btn:hover { background: var(--accent-hover); transform: translateY(-1px); }
 .new-chat-btn:active { transform: translateY(0); }
 .new-chat-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -491,9 +492,10 @@ body { font-family: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", He
 /* ==========================================================================
    Media Queries - Responsive
    ========================================================================== */
-/* Móvil: al abrir el menú cubre TODA la pantalla (100% width) */
+/* Móvil: al abrir el menú cubre TODA la pantalla (100% width) y muestra botón X */
 @media (max-width: 767px) {
     .sidebar { width: 100% !important; max-width: 100% !important; }
+    .close-sidebar-btn { display: flex; }
 }
 @media (max-width: 480px) {
     html { font-size: 58%; }
@@ -513,10 +515,10 @@ body { font-family: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", He
     .modal-content.small { width: 95%; margin: 1rem; }
 }
 
-/* Tablet y desktop: sidebar visible sin bordes separadores */
+/* Tablet y desktop: el botón hamburguesa oculta completamente el historial */
 @media (min-width: 768px) {
-    .sidebar { position: static; transform: translateX(0); width: 26rem; min-width: 26rem; transition: width 0.3s ease, min-width 0.3s ease; box-shadow: none; }
-    .sidebar.collapsed { width: 0; min-width: 0; border-right: none; overflow: hidden; }
+    .sidebar { position: static; transform: translateX(0); width: 26rem; min-width: 26rem; transition: width 0.3s ease, min-width 0.3s ease, margin-left 0.3s ease; box-shadow: none; }
+    .sidebar.collapsed { width: 0; min-width: 0; margin-left: -26rem; overflow: hidden; padding: 0; border: none; }
     .header { padding: 0 1.6rem; gap: 1.6rem; }
     .header h1 { font-size: 2rem; }
     .message-content { max-width: 72rem; }
