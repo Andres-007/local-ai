@@ -238,7 +238,8 @@ body { font-family: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", He
 .empty-state p { color: var(--text-secondary); font-size: 1.6rem; }
 @keyframes empty-state-in { to { opacity: 1; transform: translateY(0); } }
 @keyframes pulse-soft { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.85; transform: scale(1.02); } }
-.input-area { padding: 1.2rem; background: var(--bg-secondary); border-top: 1px solid var(--border); flex-shrink: 0; display: flex; flex-direction: column; gap: 0.8rem; min-height: 0; }
+
+.input-area { padding: 1.2rem; background: var(--bg-primary); border-top: 1px solid var(--border); flex-shrink: 0; display: flex; flex-direction: column; gap: 0.8rem; min-height: 0; }
 .attachments-preview { max-width: 80rem; margin: 0 auto; width: 100%; display: flex; flex-wrap: wrap; gap: 0.8rem; min-height: 0; }
 .attachment-chip { display: inline-flex; align-items: center; gap: 0.6rem; padding: 0.6rem 1rem; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 0.8rem; font-size: 1.3rem; color: var(--text-primary); max-width: 100%; }
 .attachment-chip--error { border-color: rgba(218, 54, 51, 0.65); color: var(--danger-hover); background: rgba(218, 54, 51, 0.1); }
@@ -247,32 +248,116 @@ body { font-family: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", He
 .attachment-chip .attachment-size { font-size: 1.2rem; color: var(--text-secondary); flex-shrink: 0; }
 .attachment-chip .attachment-remove { padding: 0.2rem; background: none; border: none; color: var(--text-secondary); cursor: pointer; border-radius: 0.4rem; display: flex; align-items: center; justify-content: center; transition: color 0.2s; }
 .attachment-chip .attachment-remove:hover { color: var(--danger); background: rgba(218, 54, 51, 0.1); }
-.input-container { max-width: 80rem; margin: 0 auto; width: 100%; display: flex; gap: 1rem; align-items: flex-end; min-width: 0; }
-#chat-input { flex-grow: 1; min-width: 0; padding: 1.2rem 1.6rem; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 0.8rem; color: var(--text-primary); font-size: 1.6rem; resize: none; font-family: inherit; line-height: 1.5; max-height: 20rem; overflow-y: auto; }
-#chat-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(47, 129, 247, 0.2); }
-#chat-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.input-container {
+    max-width: 80rem;
+    margin: 0 auto;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 1.2rem;
+    padding: 1.2rem 1.4rem 1rem 1.4rem;
+    transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+}
+.input-container:focus-within {
+    border-color: rgba(47, 129, 247, 0.5);
+    box-shadow: 0 0 0 3px rgba(47, 129, 247, 0.15);
+}
+#chat-input {
+    width: 100%;
+    padding: 0.4rem 0 0.8rem 0;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text-primary);
+    font-size: 1.5rem;
+    resize: none;
+    font-family: inherit;
+    line-height: 1.5;
+    min-height: 4.5rem;
+    max-height: 18rem;
+    overflow-y: auto;
+}
+#chat-input::placeholder {
+    color: var(--text-secondary);
+    opacity: 0.75;
+}
+#chat-input:focus, #chat-input:focus-visible {
+    outline: none;
+    box-shadow: none;
+}
+.input-actions-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 0.8rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    gap: 1rem;
+}
+.input-actions-left {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+}
 .file-input { display: none; }
 .file-upload-btn {
-    padding: 1.2rem;
+    padding: 0.6rem 1.2rem;
     background: var(--bg-tertiary);
     border: 1px solid var(--border);
     border-radius: 0.8rem;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
-    justify-content: center;
-    transition: background var(--duration-fast), transform var(--duration-fast);
-    height: 4.8rem;
-    width: 4.8rem;
+    gap: 0.6rem;
+    color: var(--text-primary);
+    font-size: 1.3rem;
+    font-weight: 400;
+    transition: background var(--duration-fast), border-color var(--duration-fast), transform var(--duration-fast);
+    height: 3.4rem;
 }
-.file-upload-btn:hover { background: var(--bg-primary); transform: scale(1.05); }
-.file-upload-btn:active { transform: scale(0.98); }
-.file-upload-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-#send-btn { padding: 1.2rem; background: var(--accent); border: none; border-radius: 0.8rem; color: white; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background var(--duration-fast), transform var(--duration-fast); flex-shrink: 0; width: 4.8rem; height: 4.8rem; }
-#send-btn:hover:not(:disabled) { background: var(--accent-hover); transform: scale(1.05); }
-#send-btn:active:not(:disabled) { transform: scale(0.96); }
-#send-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-#send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.file-upload-btn:hover {
+    background: var(--bg-primary);
+    border-color: var(--text-secondary);
+}
+.file-upload-btn:active {
+    transform: scale(0.97);
+}
+.file-upload-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+#send-btn {
+    padding: 0.6rem 1.2rem;
+    background: var(--accent);
+    border: none;
+    border-radius: 0.8rem;
+    color: white;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background var(--duration-fast), transform var(--duration-fast), opacity var(--duration-fast);
+    flex-shrink: 0;
+    width: 3.8rem;
+    height: 3.4rem;
+}
+#send-btn:hover:not(:disabled) {
+    background: var(--accent-hover);
+    transform: scale(1.04);
+}
+#send-btn:active:not(:disabled) {
+    transform: scale(0.96);
+}
+#send-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+#send-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
 
 /* ==========================================================================
    Modal
@@ -313,9 +398,10 @@ body { font-family: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", He
     .empty-state-icon { font-size: 5rem; }
     .message-content { padding: 1rem; font-size: 1.4rem; }
     .input-area { padding: 0.8rem; }
-    .input-container { gap: 0.8rem; }
-    #chat-input { padding: 1rem 1.2rem; font-size: 1.5rem; }
-    .file-upload-btn, #send-btn { width: 4.2rem; height: 4.2rem; min-width: 4.2rem; min-height: 4.2rem; }
+    .input-container { padding: 1rem 1.2rem 0.8rem 1.2rem; }
+    #chat-input { font-size: 1.4rem; }
+    .file-upload-btn { height: 3.2rem; padding: 0.5rem 1rem; font-size: 1.2rem; }
+    #send-btn { width: 3.6rem; height: 3.2rem; }
     .sidebar { width: 100%; max-width: 100%; }
     .modal-content.small { width: 95%; margin: 1rem; }
 }
@@ -384,4 +470,3 @@ body { font-family: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", He
     .empty-state-icon { animation: none; }
     .typing-indicator span { animation: none; opacity: 0.8; }
 }
-
