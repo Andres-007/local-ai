@@ -138,9 +138,15 @@ def _client_identifier():
 
 @app.context_processor
 def _inject_template_security_values():
+    email = session.get('user_email', '')
+    name = session.get('user_name', '')
+    if not name and email:
+        name = email.split('@')[0]
     return {
         "csrf_token": _get_or_create_csrf_token(),
         "max_upload_bytes": app.config["MAX_CONTENT_LENGTH"],
+        "user_email": email,
+        "user_name": name or "Usuario",
     }
 
 
@@ -498,10 +504,22 @@ def get_project_detail(project_id):
 def get_conversations():
     user_id = session['user_id']
     limit, offset = _parse_paging_args(default_limit=30, max_limit=200)
-    conversations = db.get_user_conversations(user_id, limit=limit + 1, skip=offset)
+    is_archived = request.args.get('archived', 'false').strip().lower() in ('true', '1')
+    conversations = db.get_user_conversations(user_id, limit=limit + 1, skip=offset, archived=is_archived)
     has_more = len(conversations) > limit
     conversations = conversations[:limit]
     return jsonify({"conversations": conversations, "has_more": has_more, "limit": limit, "offset": offset})
+
+
+@app.route('/api/conversations/<conversation_id>/archive', methods=['PATCH', 'POST'])
+@login_required
+def archive_conversation(conversation_id):
+    data = request.get_json(silent=True) or {}
+    archive_state = data.get('archived', True)
+    success = db.archive_conversation(conversation_id, session['user_id'], archive_state)
+    if success:
+        return jsonify({"message": "Estado de archivo actualizado", "archived": archive_state})
+    return jsonify({"error": "No se pudo actualizar la conversación"}), 400
 
 
 @app.route('/api/conversations', methods=['POST'])

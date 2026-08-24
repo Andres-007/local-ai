@@ -24,7 +24,22 @@
                 Nueva conversación
             </button>
         </div>
+        <div class="sidebar-divider"></div>
         <nav class="conversations-list" id="conversations-list"></nav>
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-footer">
+            <button class="archived-chats-btn" id="archived-chats-btn" title="Conversaciones archivadas">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg>
+                <span id="archived-btn-text">Archivados</span>
+            </button>
+            <div class="sidebar-account">
+                <div class="account-avatar">{{ (user_name or user_email or 'U')[:2] | upper }}</div>
+                <div class="account-info">
+                    <span class="account-name">{{ user_name or 'Usuario' }}</span>
+                    {% if user_email %}<span class="account-email">{{ user_email }}</span>{% endif %}
+                </div>
+            </div>
+        </div>
     </aside>
 
     <div class="main-container">
@@ -54,6 +69,7 @@
                     <div class="input-actions-left">
                         <label for="file-input" class="file-upload-btn" title="Adjuntar archivo">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                            <span>@archivo</span>
                         </label>
                         <input type="file" id="file-input" class="file-input" accept=".txt,.md,.mdx,.py,.js,.ts,.jsx,.tsx,.html,.htm,.css,.scss,.sass,.less,.json,.yaml,.yml,.xml,.toml,.pdf,.csv,.sql,.sh,.bat,.ps1,.env,.gitignore,.dockerfile,.graphql,.prisma,.java,.c,.cpp,.h,.cs,.go,.rs,.php,.rb,.swift,.kt,.vue,.svelte,.dart,.lua,.r,.proto,.log,.rst,.tex" title="Código, texto, PDF" />
                     </div>
@@ -63,6 +79,18 @@
                 </div>
             </form>
         </footer>
+    </div>
+
+    <!-- Menú Contextual (Clic derecho en conversación) -->
+    <div class="context-menu" id="conversation-context-menu" hidden>
+        <button class="context-menu-item" id="ctx-archive-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg>
+            <span id="ctx-archive-text">Archivar</span>
+        </button>
+        <button class="context-menu-item danger" id="ctx-delete-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+            <span>Borrar</span>
+        </button>
     </div>
 
     <!-- Modales -->

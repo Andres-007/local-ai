@@ -25,181 +25,119 @@ document.addEventListener('DOMContentLoaded', () => {
     const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
     const maxUploadBytes = Number(document.querySelector('meta[name="max-upload-bytes"]')?.content || 0);
 
+    const archivedBtn = document.getElementById('archived-chats-btn');
+    const archivedBtnText = document.getElementById('archived-btn-text');
+    const contextMenu = document.getElementById('conversation-context-menu');
+    const ctxArchiveBtn = document.getElementById('ctx-archive-btn');
+    const ctxArchiveText = document.getElementById('ctx-archive-text');
+    const ctxDeleteBtn = document.getElementById('ctx-delete-btn');
+
     let currentConversationId = null;
     let conversationToDeleteId = null;
+    let contextTargetId = null;
+    let isShowingArchived = false;
     let currentPreviewCode = '';
     let currentStreamController = null;
     let attachmentError = '';
     const conversationPaging = { limit: 30, offset: 0, hasMore: false, loading: false };
     const messagePaging = { limit: 50, offset: 0, hasMore: false, loading: false };
-    
-    // Inicializador de markdown-it con syntax highlighting
-    const md = window.markdownit({
-        highlight: (str, lang) => {
-            if (lang && hljs.getLanguage(lang)) {
-                try {
-                    const result = hljs.highlight(str, { language: lang, ignoreIllegals: true });
-                    // Se añade la clase del lenguaje al tag <code> para que el selector funcione
-                    return `<pre class="hljs"><code class="language-${lang}">${result.value}</code></pre>`;
-                } catch (__) {
-                    // Fallback en caso de error
-                    return `<pre class="hljs"><code class="language-${lang}">${md.utils.escapeHtml(str)}</code></pre>`;
-                }
-            }
-            // Si no hay lenguaje, se devuelve como antes
-            return `<pre class="hljs"><code>${md.utils.escapeHtml(str)}</code></pre>`;
-        }
-    });
 
-    const openSidebar = () => { sidebar.classList.add('open'); sidebarOverlay.classList.add('active'); };
-    const closeSidebar = () => { sidebar.classList.remove('open'); sidebarOverlay.classList.remove('active'); };
-
-    toggleBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (window.innerWidth < 768) {
-            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
-        } else {
-            sidebar.classList.toggle('collapsed');
-        }
-    });
-    sidebarOverlay.addEventListener('click', closeSidebar);
-
-    function escapeHtml(s) {
-        return String(s)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-
-    function formatFileSize(bytes) {
-        return bytes < 1024
-            ? `${bytes} B`
-            : bytes < 1024 * 1024
-                ? `${(bytes / 1024).toFixed(1)} KB`
-                : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    }
-
-    function withCsrf(options = {}) {
-        const method = String(options.method || 'GET').toUpperCase();
-        if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
-            return options;
-        }
-        const headers = new Headers(options.headers || {});
-        if (csrfToken) {
-            headers.set('X-CSRFToken', csrfToken);
-        }
-        return { ...options, headers };
-    }
-
-    function renderAttachmentPreview() {
-        if (attachmentError) {
-            attachmentsPreview.innerHTML = `
-                <div class="attachment-chip attachment-chip--error">
-                    <span class="attachment-name">${escapeHtml(attachmentError)}</span>
-                    <button type="button" class="attachment-remove" aria-label="Descartar error" title="Descartar error">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                    </button>
-                </div>
-            `;
-            attachmentsPreview.querySelector('.attachment-remove').addEventListener('click', (e) => {
-                e.preventDefault();
-                attachmentError = '';
-                renderAttachmentPreview();
-            });
-            return;
-        }
-        const file = fileInput.files[0];
-        if (!file) {
-            attachmentsPreview.innerHTML = '';
-            return;
-        }
-        const safeName = escapeHtml(file.name);
-        const size = formatFileSize(file.size);
-        attachmentsPreview.innerHTML = `
-            <div class="attachment-chip">
-                <span class="attachment-icon">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-                </span>
-                <span class="attachment-name" title="${safeName}">${safeName}</span>
-                <span class="attachment-size">${size}</span>
-                <button type="button" class="attachment-remove" aria-label="Quitar archivo" title="Quitar archivo">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                </button>
-            </div>
-        `;
-        attachmentsPreview.querySelector('.attachment-remove').addEventListener('click', (e) => {
-            e.preventDefault();
-            attachmentError = '';
-            fileInput.value = '';
-            renderAttachmentPreview();
+    if (archivedBtn) {
+        archivedBtn.addEventListener('click', async () => {
+            isShowingArchived = !isShowingArchived;
+            archivedBtn.classList.toggle('active', isShowingArchived);
+            archivedBtnText.textContent = isShowingArchived ? 'Volver a chats' : 'Archivados';
+            await loadConversations(true);
         });
     }
 
-    fileInput.addEventListener('change', () => {
-        attachmentError = '';
-        const file = fileInput.files[0];
-        if (file && maxUploadBytes > 0 && file.size > maxUploadBytes) {
-            attachmentError = `El archivo supera el límite de ${formatFileSize(maxUploadBytes)}.`;
-            fileInput.value = '';
+    function hideContextMenu() {
+        if (contextMenu) {
+            contextMenu.hidden = true;
         }
-        renderAttachmentPreview();
+        contextTargetId = null;
+    }
+
+    document.addEventListener('click', (e) => {
+        if (contextMenu && !contextMenu.contains(e.target)) {
+            hideContextMenu();
+        }
     });
 
-    newChatBtn.addEventListener('click', () => {
-        currentConversationId = null;
-        chatContainer.innerHTML = `<div class="empty-state"><div class="empty-state-icon">💬</div><h2>¿En qué puedo ayudarte hoy?</h2><p>Puedo ayudarte a crear, depurar y mejorar tu código web</p></div>`;
-        document.querySelectorAll('.conversation-item').forEach(el => el.classList.remove('active'));
-        fileInput.value = '';
-        attachmentError = '';
-        renderAttachmentPreview();
-        if (window.innerWidth < 768) closeSidebar();
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') hideContextMenu();
     });
 
-    conversationsList.addEventListener('click', (e) => {
-        const deleteBtn = e.target.closest('.delete-btn');
-        if (deleteBtn) {
-            e.stopPropagation();
-            conversationToDeleteId = deleteBtn.dataset.id;
-            deleteModal.classList.add('show');
-            return;
-        }
+    conversationsList.addEventListener('contextmenu', (e) => {
         const item = e.target.closest('.conversation-item');
-        if (item) {
-            loadConversation(item.dataset.id);
+        if (!item) return;
+        e.preventDefault();
+        contextTargetId = item.dataset.id;
+        if (ctxArchiveText) {
+            ctxArchiveText.textContent = isShowingArchived ? 'Desarchivar' : 'Archivar';
+        }
+
+        if (contextMenu) {
+            contextMenu.hidden = false;
+            const x = Math.min(e.clientX, window.innerWidth - 160);
+            const y = Math.min(e.clientY, window.innerHeight - 100);
+            contextMenu.style.left = `${x}px`;
+            contextMenu.style.top = `${y}px`;
         }
     });
 
-    // Helper para fetch que maneja errores de autenticación
-    async function fetchApi(url, options = {}) {
-        const res = await fetch(url, withCsrf(options));
-        if (res.status === 401) {
-            window.location.href = '/'; // Redirigir al login
-            throw new Error('No autorizado');
-        }
-        return res;
+    if (ctxArchiveBtn) {
+        ctxArchiveBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            if (!contextTargetId) return;
+            const targetId = contextTargetId;
+            hideContextMenu();
+            try {
+                await fetchApi(`/api/conversations/${targetId}/archive`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ archived: !isShowingArchived })
+                });
+                if (currentConversationId === targetId && !isShowingArchived) {
+                    newChatBtn.click();
+                }
+                await loadConversations(true);
+            } catch (err) {
+                console.error('Error archivando conversación:', err);
+            }
+        });
     }
 
-    async function ensureConversationId(initialText) {
-        if (currentConversationId) return currentConversationId;
-        const base = (initialText || '').trim();
-        const title = base ? (base.length > 50 ? `${base.slice(0, 50)}...` : base) : 'Nueva Conversación';
-        const res = await fetchApi('/api/conversations', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title })
+    if (ctxDeleteBtn) {
+        ctxDeleteBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (!contextTargetId) return;
+            conversationToDeleteId = contextTargetId;
+            hideContextMenu();
+            deleteModal.classList.add('show');
         });
-        if (!res.ok) {
-            throw new Error(`HTTP error! status: ${res.status}`);
+    }
+
+    function getDateGroupLabel(conv) {
+        const rawDate = conv.updated_at || conv.created_at;
+        if (!rawDate) return 'ANTERIORES';
+        const d = new Date(rawDate);
+        if (isNaN(d.getTime())) return 'ANTERIORES';
+
+        const now = new Date();
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+        const startOf7Days = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
+
+        if (d >= startOfToday) {
+            return 'HOY';
+        } else if (d >= startOfYesterday) {
+            return 'AYER';
+        } else if (d >= startOf7Days) {
+            return 'ÚLTIMOS 7 DÍAS';
+        } else {
+            return 'ANTERIORES';
         }
-        const data = await res.json();
-        if (!data.conversation_id) {
-            throw new Error('No se pudo crear la conversación');
-        }
-        currentConversationId = data.conversation_id;
-        await loadConversations();
-        return currentConversationId;
     }
 
     async function loadConversations(reset = true) {
@@ -212,7 +150,8 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             const params = new URLSearchParams({
                 limit: conversationPaging.limit,
-                offset: conversationPaging.offset
+                offset: conversationPaging.offset,
+                archived: isShowingArchived
             });
             const res = await fetchApi(`/api/conversations?${params.toString()}`);
             if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
@@ -230,16 +169,49 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function displayConversations(conversations, append = false) {
-        const html = conversations.map(conv => `
-            <div class="conversation-item" data-id="${escapeHtml(String(conv._id))}">
-                <span class="conversation-title">${escapeHtml(String(conv.title ?? ''))}</span>
-                <button class="delete-btn" data-id="${escapeHtml(String(conv._id))}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
-            </div>`).join('');
-        if (append) {
-            conversationsList.insertAdjacentHTML('beforeend', html);
-        } else {
-            conversationsList.innerHTML = html;
+        if (!append) {
+            conversationsList.innerHTML = '';
         }
+        if (!conversations.length && !append) {
+            conversationsList.innerHTML = `<div style="padding: 1.2rem; font-size: 1.3rem; color: var(--text-secondary); text-align: center;">${isShowingArchived ? 'No hay conversaciones archivadas' : 'No hay conversaciones'}</div>`;
+            return;
+        }
+
+        const groups = {};
+        const groupOrder = ['HOY', 'AYER', 'ÚLTIMOS 7 DÍAS', 'ANTERIORES'];
+
+        conversations.forEach(conv => {
+            const label = getDateGroupLabel(conv);
+            if (!groups[label]) groups[label] = [];
+            groups[label].push(conv);
+        });
+
+        groupOrder.forEach(label => {
+            const items = groups[label];
+            if (!items || !items.length) return;
+
+            let header = conversationsList.querySelector(`.conversation-group-title[data-group="${label}"]`);
+            if (!header) {
+                header = document.createElement('div');
+                header.className = 'conversation-group-title';
+                header.dataset.group = label;
+                header.textContent = label;
+                conversationsList.appendChild(header);
+            }
+
+            items.forEach(conv => {
+                const itemEl = document.createElement('div');
+                itemEl.className = 'conversation-item';
+                if (conv._id === currentConversationId) itemEl.classList.add('active');
+                itemEl.dataset.id = escapeHtml(String(conv._id));
+                itemEl.innerHTML = `
+                    <span class="conversation-title">${escapeHtml(String(conv.title ?? ''))}</span>
+                    <button class="delete-btn" data-id="${escapeHtml(String(conv._id))}" title="Eliminar conversación">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                    </button>
+                `;
+            });
+        });
     }
 
     function updateConversationsLoadMore() {

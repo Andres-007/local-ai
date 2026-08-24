@@ -360,10 +360,15 @@ class ChatDatabase:
         uid = doc.get('user_id')
         return str(uid) if uid is not None else None
 
-    def get_user_conversations(self, user_id, limit=None, skip=0):
+    def get_user_conversations(self, user_id, limit=None, skip=0, archived=False):
         if not self._ensure_connection():
             return []
-        query = self.conversations.find({'user_id': user_id}).sort('updated_at', -1)
+        query_filter = {'user_id': user_id}
+        if archived:
+            query_filter['archived'] = True
+        else:
+            query_filter['archived'] = {'$ne': True}
+        query = self.conversations.find(query_filter).sort('updated_at', -1)
         if skip:
             query = query.skip(skip)
         if limit is not None:
@@ -371,7 +376,24 @@ class ChatDatabase:
         conversations = list(query)
         for conv in conversations:
             conv['_id'] = str(conv['_id'])
+            if 'created_at' in conv and isinstance(conv['created_at'], datetime):
+                conv['created_at'] = conv['created_at'].isoformat()
+            if 'updated_at' in conv and isinstance(conv['updated_at'], datetime):
+                conv['updated_at'] = conv['updated_at'].isoformat()
         return conversations
+
+    def archive_conversation(self, conversation_id, user_id, archive_state=True):
+        if not self._ensure_connection():
+            return False
+        try:
+            conv_obj_id = ObjectId(conversation_id)
+            result = self.conversations.update_one(
+                {'_id': conv_obj_id, 'user_id': user_id},
+                {'$set': {'archived': bool(archive_state)}}
+            )
+            return result.matched_count > 0
+        except Exception:
+            return False
 
     def delete_conversation(self, conversation_id, user_id):
         if not self._ensure_connection():
