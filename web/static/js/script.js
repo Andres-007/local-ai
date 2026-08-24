@@ -42,6 +42,26 @@ document.addEventListener('DOMContentLoaded', () => {
     const conversationPaging = { limit: 30, offset: 0, hasMore: false, loading: false };
     const messagePaging = { limit: 50, offset: 0, hasMore: false, loading: false };
 
+    const openSidebar = () => { sidebar.classList.add('open'); sidebarOverlay.classList.add('active'); };
+    const closeSidebar = () => { sidebar.classList.remove('open'); sidebarOverlay.classList.remove('active'); };
+
+    toggleBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (window.innerWidth < 768) {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        } else {
+            sidebar.classList.toggle('collapsed');
+        }
+    });
+
+    // En móviles el historial no se quita haciendo clic en el fondo/overlay,
+    // únicamente se cierra al seleccionar una conversación.
+    sidebarOverlay.addEventListener('click', (e) => {
+        if (window.innerWidth >= 768) {
+            closeSidebar();
+        }
+    });
+
     if (archivedBtn) {
         archivedBtn.addEventListener('click', async () => {
             isShowingArchived = !isShowingArchived;
@@ -117,6 +137,30 @@ document.addEventListener('DOMContentLoaded', () => {
             deleteModal.classList.add('show');
         });
     }
+
+    newChatBtn.addEventListener('click', () => {
+        currentConversationId = null;
+        chatContainer.innerHTML = `<div class="empty-state"><div class="empty-state-icon">💬</div><h2>¿En qué puedo ayudarte hoy?</h2><p>Puedo ayudarte a crear, depurar y mejorar tu código web</p></div>`;
+        document.querySelectorAll('.conversation-item').forEach(el => el.classList.remove('active'));
+        fileInput.value = '';
+        attachmentError = '';
+        renderAttachmentPreview();
+        if (window.innerWidth < 768) closeSidebar();
+    });
+
+    conversationsList.addEventListener('click', (e) => {
+        const deleteBtn = e.target.closest('.delete-btn');
+        if (deleteBtn) {
+            e.stopPropagation();
+            conversationToDeleteId = deleteBtn.dataset.id;
+            deleteModal.classList.add('show');
+            return;
+        }
+        const item = e.target.closest('.conversation-item');
+        if (item) {
+            loadConversation(item.dataset.id);
+        }
+    });
 
     function getDateGroupLabel(conv) {
         const rawDate = conv.updated_at || conv.created_at;
