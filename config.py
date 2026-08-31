@@ -9,13 +9,21 @@ load_dotenv(_root / '.env')
 
 logger = logging.getLogger(__name__)
 
+def get_gemini_api_key():
+	load_dotenv(_root / '.env', override=False)
+	for name in ('GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GEMINI_KEY', 'GOOGLE_KEY', 'API_KEY', 'gemini_api_key', 'google_api_key'):
+		val = os.getenv(name)
+		if val and val.strip():
+			return val.strip().strip('"\'')
+	return None
+
 class Config:
 	"""
 	Clase de configuración para gestionar las variables de entorno
 	"""
 	# API de Gemini
-	GEMINI_API_KEY = os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_API_KEY')
-	GEMINI_MODEL_NAME = os.getenv('GEMINI_MODEL_NAME', 'gemini-3.6-flash')
+	GEMINI_API_KEY = get_gemini_api_key()
+	GEMINI_MODEL_NAME = os.getenv('GEMINI_MODEL_NAME', 'gemini-1.5-flash')
 	
 	# MongoDB - URI válida por defecto para desarrollo local
 	MONGODB_URI = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/')

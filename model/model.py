@@ -24,12 +24,28 @@ def _env_int(name, default, min_value=None, max_value=None):
 		value = min(max_value, value)
 	return value
 
-# Configura la API de Gemini con la clave obtenida desde la configuración
-try:
-	genai.configure(api_key=Config.GEMINI_API_KEY)
-except (AttributeError, TypeError) as exc:
-	logger.error("La clave de API de Gemini no se ha configurado. Asegúrate de crear un archivo .env con tu GEMINI_API_KEY.")
-	# no re-raise to allow the module to be imported in environments without the key
+def _get_api_key():
+	if hasattr(Config, 'get_gemini_api_key'):
+		key = Config.get_gemini_api_key()
+		if key:
+			return key
+	for name in ('GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GEMINI_KEY', 'GOOGLE_KEY', 'API_KEY'):
+		val = os.getenv(name)
+		if val and val.strip():
+			return val.strip().strip('"\'')
+	return None
+
+def _configure_genai():
+	key = _get_api_key()
+	if key:
+		try:
+			genai.configure(api_key=key)
+		except Exception as e:
+			logger.error("Error al configurar genai: %s", e)
+	return key
+
+# Intentar configuración inicial de la API
+_configure_genai()
 
 class WebDevAI:
 	"""
@@ -39,13 +55,13 @@ class WebDevAI:
 		"""
 		Inicializa el modelo generativo con system instruction integrada.
 		"""
-		generation_config = {
+		self.generation_config = {
 			"temperature": 0.5,
 			"top_p": 1,
 			"top_k": 32,
 			"max_output_tokens": _env_int("GEMINI_MAX_OUTPUT_TOKENS", 8192, min_value=1024, max_value=32768),
 		}
-		safety_settings = [
+		self.safety_settings = [
 			{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
 			{"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
 			{"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
@@ -53,7 +69,7 @@ class WebDevAI:
 		]
 		
 		# System instruction mejorada de nivel Senior con patrones de calidad, seguridad y UI Premium
-		system_instruction = """
+		self.system_instruction = """
 [ROL E IDENTIDAD]
 Eres 'Web Dev AI', un Ingeniero de Software Principal y Arquitecto Full-Stack de nivel Senior.
 Tu propósito es diseñar, generar, auditar, refactorizar y explicar código de alta calidad en entornos web, combinando excelencia en Frontend (HTML5, CSS3, JavaScript ES6+) y Backend (Python/Flask/FastAPI, Node.js/Express, entre otros).
@@ -91,17 +107,28 @@ Tu propósito es diseñar, generar, auditar, refactorizar y explicar código de 
 - Manejo de Ambigüedad: Si el requerimiento del usuario carece de detalles, asume Defaults Profesionales de alto nivel y menciona brevemente las suposiciones realizadas.
 - Flexibilidad Tecnológica: Puedes responder y resolver problemas en cualquier lenguaje o framework (Java/Spring, PHP/Laravel, C#/.NET, Go, Rust, React, Vue, Svelte, SQL, etc.).
 """
-		
-		# Modelo dinámico obtenido desde la configuración o variable de entorno (por defecto gemini-3.6-flash)
-		model_name = getattr(Config, 'GEMINI_MODEL_NAME', 'gemini-3.6-flash')
-		logger.info(f"Inicializando GenerativeModel de Gemini con modelo: {model_name}")
+		self._init_generative_model()
 
+	def _init_generative_model(self, preferred_model=None):
+		model_name = preferred_model or getattr(Config, 'GEMINI_MODEL_NAME', 'gemini-1.5-flash')
+		# Normalizar modelos no soportados en API pública (ej. gemini-3.6-flash -> gemini-1.5-flash)
+		if '3.6' in model_name or '3.0' in model_name:
+			model_name = 'gemini-1.5-flash'
+		
+		self.model_name = model_name
+		logger.info(f"Inicializando GenerativeModel de Gemini con modelo: {self.model_name}")
 		self.model = genai.GenerativeModel(
-			model_name=model_name,
-			generation_config=generation_config,
-			safety_settings=safety_settings,
-			system_instruction=system_instruction
+			model_name=self.model_name,
+			generation_config=self.generation_config,
+			safety_settings=self.safety_settings,
+			system_instruction=self.system_instruction
 		)
+
+	def _ensure_ready(self):
+		key = _configure_genai()
+		if not key:
+			return "Error: No se encontró la clave de API de Gemini (GEMINI_API_KEY). Añade GEMINI_API_KEY=tu_clave_aqui en tu archivo .env y reinicia el servidor."
+		return None
 
 	# Máximo de mensajes de historial (Mongo) pasados a Gemini por petición (optimizado a 16 para velocidad)
 	MAX_GEMINI_HISTORY_MESSAGES = _env_int("MAX_GEMINI_HISTORY_MESSAGES", 16, min_value=1, max_value=80)
@@ -136,14 +163,10 @@ Tu propósito es diseñar, generar, auditar, refactorizar y explicar código de 
 	def generate(self, prompt, history_messages=None):
 		"""
 		Envía un prompt del usuario al modelo y obtiene una respuesta completa.
-
-		Args:
-			prompt (str): La pregunta o instrucción del usuario.
-			history_messages (list, optional): Mensajes previos de la BD (misma conversación).
-
-		Returns:
-			str: La respuesta generada por el modelo de IA en formato Markdown.
 		"""
+		not_ready_err = self._ensure_ready()
+		if not_ready_err:
+			return not_ready_err
 		try:
 			chat = self._start_chat_from_history(history_messages)
 			chat.send_message(prompt)
@@ -151,10 +174,17 @@ Tu propósito es diseñar, generar, auditar, refactorizar y explicar código de 
 		except Exception as e:
 			logger.exception("Error al contactar con Gemini: %s", e)
 			err_str = str(e)
+			if "404" in err_str or "not found" in err_str.lower():
+				try:
+					logger.info("Reintentando petición con modelo fallback gemini-1.5-flash...")
+					self._init_generative_model("gemini-1.5-flash")
+					chat = self._start_chat_from_history(history_messages)
+					chat.send_message(prompt)
+					return self._safe_last_text(chat)
+				except Exception as e2:
+					return f"Error: Modelo no encontrado ({self.model_name}). Verifica el nombre del modelo en tu .env. Detalle: {e2}"
 			if "API_KEY_INVALID" in err_str or "API key not valid" in err_str or "DefaultCredentialsError" in err_str:
-				return "Error: Clave de API de Gemini no válida o ausente. Revisa tu GEMINI_API_KEY."
-			elif "404" in err_str or "not found" in err_str.lower():
-				return f"Error: Modelo no encontrado ({getattr(Config, 'GEMINI_MODEL_NAME', '')}). Verifica el nombre del modelo."
+				return "Error: Clave de API de Gemini no válida o ausente. Revisa tu GEMINI_API_KEY en tu archivo .env."
 			return f"Error: No se pudo obtener una respuesta del modelo. Detalle: {e}"
 
 	# Extensiones de archivos de código/texto soportados
@@ -334,6 +364,9 @@ Tu propósito es diseñar, generar, auditar, refactorizar y explicar código de 
 			return None
 
 	def generate_with_file(self, prompt, file_storage=None, file_bytes=None, filename=None, mimetype=None, history_messages=None):
+		not_ready_err = self._ensure_ready()
+		if not_ready_err:
+			return not_ready_err
 		try:
 			if file_bytes is not None:
 				raw = file_bytes if isinstance(file_bytes, bytes) else bytes(file_bytes)
@@ -405,34 +438,62 @@ Tu propósito es diseñar, generar, auditar, refactorizar y explicar código de 
 				return "Error al leer el PDF. Asegúrate de tener instalado: pip install pypdf"
 			return "Error: No se pudo procesar el archivo. Verifica el formato e inténtalo de nuevo."
 	
+	def _safe_chunk_text(self, chunk):
+		try:
+			if getattr(chunk, "text", None):
+				return chunk.text
+		except (ValueError, AttributeError):
+			pass
+		try:
+			candidates = getattr(chunk, "candidates", [])
+			if candidates and candidates[0].content and candidates[0].content.parts:
+				return "".join(part.text for part in candidates[0].content.parts if getattr(part, "text", None))
+		except (IndexError, AttributeError):
+			pass
+		return ""
+
 	def generate_stream(self, prompt, history_messages=None):
 		"""
 		Envía un prompt del usuario al modelo y genera una respuesta en streaming.
-
-		Args:
-			prompt (str): La pregunta o instrucción del usuario.
-			history_messages (list, optional): Mensajes previos de la BD (misma conversación).
-
-		Yields:
-			str: Fragmentos de texto de la respuesta conforme se generan.
 		"""
+		not_ready_err = self._ensure_ready()
+		if not_ready_err:
+			yield not_ready_err
+			return
 		try:
 			chat = self._start_chat_from_history(history_messages)
 			response = chat.send_message(prompt, stream=True)
 			for chunk in response:
-				if getattr(chunk, "text", None):
-					yield chunk.text
+				txt = self._safe_chunk_text(chunk)
+				if txt:
+					yield txt
 		except Exception as e:
 			logger.exception("Error al contactar con Gemini (streaming): %s", e)
 			err_str = str(e)
+			if "404" in err_str or "not found" in err_str.lower():
+				try:
+					logger.info("Reintentando streaming con modelo fallback gemini-1.5-flash...")
+					self._init_generative_model("gemini-1.5-flash")
+					chat = self._start_chat_from_history(history_messages)
+					response = chat.send_message(prompt, stream=True)
+					for chunk in response:
+						txt = self._safe_chunk_text(chunk)
+						if txt:
+							yield txt
+					return
+				except Exception as e2:
+					yield f"Error: Modelo no encontrado ({self.model_name}). Detalle: {e2}"
+					return
 			if "API_KEY_INVALID" in err_str or "API key not valid" in err_str or "DefaultCredentialsError" in err_str:
-				yield "Error: Clave de API de Gemini no válida o ausente. Revisa tu GEMINI_API_KEY."
-			elif "404" in err_str or "not found" in err_str.lower():
-				yield f"Error: Modelo no encontrado ({getattr(Config, 'GEMINI_MODEL_NAME', '')}). Verifica el nombre del modelo."
+				yield "Error: Clave de API de Gemini no válida o ausente. Revisa tu GEMINI_API_KEY en tu archivo .env."
 			else:
 				yield f"Error: No se pudo obtener respuesta del modelo ({e})."
 
 	def generate_stream_with_file(self, prompt, file_storage=None, file_bytes=None, filename=None, mimetype=None, history_messages=None):
+		not_ready_err = self._ensure_ready()
+		if not_ready_err:
+			yield not_ready_err
+			return
 		try:
 			if file_bytes is not None:
 				raw = file_bytes if isinstance(file_bytes, bytes) else bytes(file_bytes)
