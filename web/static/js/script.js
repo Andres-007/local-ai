@@ -25,6 +25,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
     const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
     const maxUploadBytes = Number(document.querySelector('meta[name="max-upload-bytes"]')?.content || 0);
+    const md = window.markdownit ? window.markdownit({ html: false, linkify: true, breaks: true }) : { render: (t) => String(t || '').replace(/</g, "&lt;").replace(/>/g, "&gt;") };
 
     const archivedBtn = document.getElementById('archived-chats-btn');
     const archivedBtnText = document.getElementById('archived-btn-text');
@@ -649,9 +650,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     `;
 
                     if (currentPreviewCode.includes('</body>')) {
-                        runnerFrame.srcdoc = currentPreviewCode.replace('</body>', navigationInterceptorScript + '</body>');
+                        runnerFrame.srcdoc = currentPreviewCode.replace(/<\/body>(?![\s\S]*<\/body>)/i, navigationInterceptorScript + '</body>');
                     } else if (currentPreviewCode.includes('</html>')) {
-                        runnerFrame.srcdoc = currentPreviewCode.replace('</html>', navigationInterceptorScript + '</html>');
+                        runnerFrame.srcdoc = currentPreviewCode.replace(/<\/html>(?![\s\S]*<\/html>)/i, navigationInterceptorScript + '</html>');
                     } else {
                         runnerFrame.srcdoc = currentPreviewCode + navigationInterceptorScript;
                     }

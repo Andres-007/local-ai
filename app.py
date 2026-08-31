@@ -13,7 +13,7 @@ import os
 import time
 import json
 import logging
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 from urllib.parse import urlparse
 from bson.objectid import ObjectId
 from bson.errors import InvalidId
@@ -68,9 +68,11 @@ app.config["MAX_CONTENT_LENGTH"] = _env_int("MAX_UPLOAD_BYTES", 10 * 1024 * 1024
 _secret_from_env = os.getenv("SECRET_KEY", "").strip()
 if _secret_from_env:
     app.secret_key = _secret_from_env
+elif _is_production_like():
+    logger.warning("SECRET_KEY no encontrada en entorno de producción. Generando clave aleatoria para esta sesión.")
+    app.secret_key = secrets.token_hex(32)
 else:
-    # Usar un fallback determinista si SECRET_KEY no está configurada en Vercel
-    app.secret_key = os.getenv("GEMINI_API_KEY", "webdevia-production-fallback-secret-key-2026")
+    app.secret_key = secrets.token_hex(32)
 
 if _is_trusted_proxy_hosting():
     # Asegura que request.scheme / url_for(..., _external=True) coincidan con HTTPS en Vercel
@@ -163,6 +165,12 @@ def _rate_limit_expensive_posts():
     bucket = _RATE_BUCKETS[key]
     while bucket and now - bucket[0] > window_seconds:
         bucket.popleft()
+
+    if len(_RATE_BUCKETS) > 1000:
+        stale_keys = [k for k, b in list(_RATE_BUCKETS.items()) if not b or (now - b[-1] > window_seconds)]
+        for k in stale_keys:
+            _RATE_BUCKETS.pop(k, None)
+
     if len(bucket) >= max_requests:
         return jsonify({"error": "Demasiadas solicitudes. Intenta nuevamente más tarde."}), 429
     bucket.append(now)
@@ -381,9 +389,37 @@ def forgot_password():
     email = _normalize_email(data.get('email'))
     if not email:
         return jsonify({"error": "El email es requerido"}), 400
+
+    user = db.get_user_by_email(email)
+    if user:
+        token = secrets.token_urlsafe(32)
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+        db.create_password_reset_token(email, token, expires_at)
+        logger.info("Token de recuperación generado para %s: %s", email, token)
+
     return jsonify({
         "message": "Si existe una cuenta con ese email, recibirás un enlace para restablecer tu contraseña en unos minutos."
     }), 200
+
+
+@app.route('/reset-password', methods=['POST'])
+def reset_password():
+    data = request.get_json(silent=True) or {}
+    token = (data.get('token') or "").strip()
+    new_password = data.get('password')
+
+    if not token or not new_password:
+        return jsonify({"error": "Token y nueva contraseña son requeridos"}), 400
+
+    if len(new_password) < 8:
+        return jsonify({"error": "La contraseña debe tener al menos 8 caracteres"}), 400
+
+    hashed_password = generate_password_hash(new_password)
+    success = db.reset_password_with_token(token, hashed_password)
+    if not success:
+        return jsonify({"error": "El token de restablecimiento es inválido o ha expirado"}), 400
+
+    return jsonify({"message": "Contraseña actualizada exitosamente"}), 200
 
 
 def _github_oauth_redirect_uri():

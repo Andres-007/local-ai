@@ -52,7 +52,7 @@ def _should_try_srv_fallback(exc):
 
 def _resolve_mongodb_srv_via_nslookup(uri):
     """
-    Fallback: resuelve mongodb+srv usando nslookup cuando la resolución DNS de Python falla.
+    Fallback: resuelve mongodb+srv usando dnspython o nslookup cuando la resolución DNS de Python falla.
     """
     try:
         parsed = urllib.parse.urlparse(uri)
@@ -65,13 +65,22 @@ def _resolve_mongodb_srv_via_nslookup(uri):
             auth, host = "", netloc
         host_clean = host.split("/")[0].split("?")[0]
         srv_host = f"_mongodb._tcp.{host_clean}"
-        result = subprocess.run(
-            ["nslookup", "-type=SRV", srv_host, "8.8.8.8"],
-            capture_output=True, text=True, timeout=15
-        )
-        if result.returncode != 0:
-            return None
-        shards = re.findall(r"svr hostname\s*=\s*(\S+\.mongodb\.net)", result.stdout)
+        shards = []
+        try:
+            import dns.resolver
+            answers = dns.resolver.resolve(srv_host, 'SRV')
+            shards = [str(r.target).rstrip('.') for r in answers]
+        except Exception:
+            try:
+                result = subprocess.run(
+                    ["nslookup", "-type=SRV", srv_host, "8.8.8.8"],
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0:
+                    shards = re.findall(r"svr hostname\s*=\s*(\S+\.mongodb\.net)", result.stdout)
+            except Exception:
+                pass
+
         if not shards:
             return None
         db_name = Config.MONGODB_DB_NAME or "webdevai"
@@ -92,6 +101,10 @@ class ChatDatabase:
     Clase para manejar la conexión y operaciones con MongoDB (usuarios, chats y proyectos).
     """
     def __init__(self):
+        self.client = None
+        self.connect()
+
+    def connect(self) -> bool:
         try:
             uri = (Config.MONGODB_URI or "").strip()
             if not uri:
@@ -129,7 +142,7 @@ class ChatDatabase:
                     self.has_primary = self._has_primary()
                     self._ensure_indexes()
                     logger.info("Conexión exitosa a MongoDB (%s)", Config.MONGODB_DB_NAME)
-                    return
+                    return True
                 except Exception as e:
                     last_error = e
                     if parsed_uri.scheme == "mongodb+srv" and not fallback_attempted and _should_try_srv_fallback(e):
@@ -141,10 +154,13 @@ class ChatDatabase:
                     if _should_try_srv_fallback(e):
                         continue
                     break
-            raise last_error
+            if last_error:
+                raise last_error
+            return False
         except Exception as e:
             logger.error("Error al conectar con MongoDB: %s", e)
             self.client = None
+            return False
 
     def _has_primary(self) -> bool:
         try:
@@ -177,8 +193,8 @@ class ChatDatabase:
 
     def _ensure_connection(self):
         if not self.client:
-            logger.error("Error: MongoDB no conectado.")
-            return False
+            logger.info("MongoDB no conectado. Intentando reconectar...")
+            return self.connect()
         return True
 
     # Métodos de Usuario
@@ -281,6 +297,39 @@ class ChatDatabase:
             return self.users.find_one({'_id': ObjectId(user_id)})
         except Exception:
             return None
+
+    def create_password_reset_token(self, email, token, expires_at):
+        if not self._ensure_connection():
+            return False
+        email = _normalize_email(email)
+        if not email:
+            return False
+        try:
+            self.users.update_one(
+                {'email': email},
+                {'$set': {'reset_token': token, 'reset_expires': expires_at}}
+            )
+            return True
+        except Exception as e:
+            logger.warning("Error guardando token de restablecimiento: %s", e)
+            return False
+
+    def reset_password_with_token(self, token, new_password_hash):
+        if not self._ensure_connection() or not token:
+            return False
+        try:
+            now = datetime.now(timezone.utc)
+            user = self.users.find_one({'reset_token': token, 'reset_expires': {'$gt': now}})
+            if not user:
+                return False
+            self.users.update_one(
+                {'_id': user['_id']},
+                {'$set': {'password': new_password_hash}, '$unset': {'reset_token': "", 'reset_expires': ""}}
+            )
+            return True
+        except Exception as e:
+            logger.warning("Error restableciendo contraseña: %s", e)
+            return False
 
     # Métodos de Conversación
     def create_conversation(self, user_id, title="Nueva Conversación"):

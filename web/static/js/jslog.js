@@ -85,9 +85,9 @@ document.addEventListener('DOMContentLoaded', function() {
         `;
         const doc = String(html || '');
         if (doc.includes('</body>')) {
-            projectPreviewFrame.srcdoc = doc.replace('</body>', navigationInterceptorScript + '</body>');
+            projectPreviewFrame.srcdoc = doc.replace(/<\/body>(?![\s\S]*<\/body>)/i, navigationInterceptorScript + '</body>');
         } else if (doc.includes('</html>')) {
-            projectPreviewFrame.srcdoc = doc.replace('</html>', navigationInterceptorScript + '</html>');
+            projectPreviewFrame.srcdoc = doc.replace(/<\/html>(?![\s\S]*<\/html>)/i, navigationInterceptorScript + '</html>');
         } else {
             projectPreviewFrame.srcdoc = doc + navigationInterceptorScript;
         }
