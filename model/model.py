@@ -110,11 +110,7 @@ Tu propósito es diseñar, generar, auditar, refactorizar y explicar código de 
 		self._init_generative_model()
 
 	def _init_generative_model(self, preferred_model=None):
-		model_name = preferred_model or getattr(Config, 'GEMINI_MODEL_NAME', 'gemini-1.5-flash')
-		# Normalizar modelos no soportados en API pública (ej. gemini-3.6-flash -> gemini-1.5-flash)
-		if '3.6' in model_name or '3.0' in model_name:
-			model_name = 'gemini-1.5-flash'
-		
+		model_name = preferred_model or getattr(Config, 'GEMINI_MODEL_NAME', 'gemini-3.6-flash')
 		self.model_name = model_name
 		logger.info(f"Inicializando GenerativeModel de Gemini con modelo: {self.model_name}")
 		self.model = genai.GenerativeModel(
@@ -176,8 +172,9 @@ Tu propósito es diseñar, generar, auditar, refactorizar y explicar código de 
 			err_str = str(e)
 			if "404" in err_str or "not found" in err_str.lower():
 				try:
-					logger.info("Reintentando petición con modelo fallback gemini-1.5-flash...")
-					self._init_generative_model("gemini-1.5-flash")
+					fallback_target = "gemini-flash-latest" if self.model_name == "gemini-3.6-flash" else "gemini-3.6-flash"
+					logger.info(f"Reintentando petición con modelo fallback {fallback_target}...")
+					self._init_generative_model(fallback_target)
 					chat = self._start_chat_from_history(history_messages)
 					chat.send_message(prompt)
 					return self._safe_last_text(chat)
@@ -472,8 +469,9 @@ Tu propósito es diseñar, generar, auditar, refactorizar y explicar código de 
 			err_str = str(e)
 			if "404" in err_str or "not found" in err_str.lower():
 				try:
-					logger.info("Reintentando streaming con modelo fallback gemini-1.5-flash...")
-					self._init_generative_model("gemini-1.5-flash")
+					fallback_target = "gemini-flash-latest" if self.model_name == "gemini-3.6-flash" else "gemini-3.6-flash"
+					logger.info(f"Reintentando streaming con modelo fallback {fallback_target}...")
+					self._init_generative_model(fallback_target)
 					chat = self._start_chat_from_history(history_messages)
 					response = chat.send_message(prompt, stream=True)
 					for chunk in response:

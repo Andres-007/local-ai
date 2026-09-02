@@ -108,6 +108,30 @@ CORS(app, origins=[o.strip() for o in allowed_origins], supports_credentials=Tru
 ai_model = WebDevAI()
 db = ChatDatabase()
 
+def _auto_seed_projects_if_empty():
+    try:
+        if db.client and db.projects.count_documents({}) == 0:
+            from seed import PROJECTS_DATA
+            for p in PROJECTS_DATA:
+                db.projects.update_one(
+                    {"title": p["title"]},
+                    {
+                        "$set": {
+                            "description": p["description"],
+                            "imageUrl": p["imageUrl"],
+                            "projectUrl": p["projectUrl"],
+                            "codeSnippet": p["codeSnippet"],
+                            "created_at": datetime.now(timezone.utc),
+                        }
+                    },
+                    upsert=True,
+                )
+            logger.info("Proyectos demo sembrados automáticamente en MongoDB.")
+    except Exception as e:
+        logger.warning("Error al sembrar proyectos demo: %s", e)
+
+_auto_seed_projects_if_empty()
+
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 _RATE_BUCKETS = defaultdict(deque)
 _RATE_LIMITS = {
