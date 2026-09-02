@@ -97,7 +97,7 @@ if github_client_id and github_client_secret:
 # Configuración de Sesión y Cookies
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SECURE'] = _is_production_like()
+app.config['SESSION_COOKIE_SECURE'] = _is_production_like() and _env_flag("COOKIE_SECURE", True)
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
 
 # CORS

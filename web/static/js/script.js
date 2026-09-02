@@ -36,7 +36,6 @@ document.addEventListener('DOMContentLoaded', () => {
         opts.headers = headers;
         const res = await fetch(url, opts);
         if (res.status === 401) {
-            window.location.href = '/';
             throw new Error('No autorizado');
         }
         return res;
