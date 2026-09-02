@@ -68,11 +68,9 @@ app.config["MAX_CONTENT_LENGTH"] = _env_int("MAX_UPLOAD_BYTES", 10 * 1024 * 1024
 _secret_from_env = os.getenv("SECRET_KEY", "").strip()
 if _secret_from_env:
     app.secret_key = _secret_from_env
-elif _is_production_like():
-    logger.warning("SECRET_KEY no encontrada en entorno de producción. Generando clave aleatoria para esta sesión.")
-    app.secret_key = secrets.token_hex(32)
 else:
-    app.secret_key = secrets.token_hex(32)
+    # Secret Key determinista para mantener sesiones consistentes entre distintas Lambdas en Vercel
+    app.secret_key = os.getenv("GEMINI_API_KEY") or "webdevia-production-serverless-secret-2026"
 
 if _is_trusted_proxy_hosting():
     # Asegura que request.scheme / url_for(..., _external=True) coincidan con HTTPS en Vercel
