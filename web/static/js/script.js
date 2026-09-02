@@ -193,6 +193,29 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    async function ensureConversationId(titleSource = 'Nueva Conversación') {
+        if (currentConversationId) return currentConversationId;
+        try {
+            const title = String(titleSource || 'Nueva Conversación').slice(0, 50);
+            const res = await fetchApi('/api/conversations', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title })
+            });
+            if (res.ok) {
+                const data = await res.json();
+                if (data.conversation_id) {
+                    currentConversationId = data.conversation_id;
+                    await loadConversations();
+                    return currentConversationId;
+                }
+            }
+        } catch (err) {
+            console.error('Error asegurando conversation_id:', err);
+        }
+        return null;
+    }
+
     async function loadConversations(reset = true) {
         if (conversationPaging.loading) return;
         conversationPaging.loading = true;
@@ -395,32 +418,57 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             const conversationId = await ensureConversationId(displayMessage);
-            const endpoint = '/api/generate-stream';
             let res;
-            if (file) {
-                const formData = new FormData();
-                formData.append('prompt', message || `Archivo adjunto: ${file.name}`);
-                formData.append('conversation_id', conversationId);
-                formData.append('file', file);
-                res = await fetchApi(endpoint, {
-                    method: 'POST',
-                    body: formData,
-                    signal: abortController.signal
-                });
-            } else {
-                res = await fetchApi(endpoint, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        prompt: message, 
-                        conversation_id: conversationId 
-                    }),
-                    signal: abortController.signal
-                });
-            }
-
-            if (!res.ok) {
-                throw new Error(`HTTP error! status: ${res.status}`);
+            try {
+                if (file) {
+                    const formData = new FormData();
+                    formData.append('prompt', message || `Archivo adjunto: ${file.name}`);
+                    if (conversationId) formData.append('conversation_id', conversationId);
+                    formData.append('file', file);
+                    res = await fetchApi('/api/generate-stream', {
+                        method: 'POST',
+                        body: formData,
+                        signal: abortController.signal
+                    });
+                } else {
+                    res = await fetchApi('/api/generate-stream', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 
+                            prompt: message, 
+                            conversation_id: conversationId 
+                        }),
+                        signal: abortController.signal
+                    });
+                }
+                if (!res.ok) throw new Error(`Streaming error: ${res.status}`);
+            } catch (streamErr) {
+                if (streamErr.name === 'AbortError') throw streamErr;
+                console.warn('Fallback a /api/generate por error en streaming/Vercel:', streamErr);
+                if (file) {
+                    const formData = new FormData();
+                    formData.append('prompt', message || `Archivo adjunto: ${file.name}`);
+                    if (conversationId) formData.append('conversation_id', conversationId);
+                    formData.append('file', file);
+                    res = await fetchApi('/api/generate', {
+                        method: 'POST',
+                        body: formData,
+                        signal: abortController.signal
+                    });
+                } else {
+                    res = await fetchApi('/api/generate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 
+                            prompt: message, 
+                            conversation_id: conversationId 
+                        }),
+                        signal: abortController.signal
+                    });
+                }
+                if (!res.ok) {
+                    throw new Error(`HTTP error! status: ${res.status}`);
+                }
             }
 
             const contentType = res.headers.get("content-type") || "";

@@ -656,8 +656,15 @@ def api_generate_stream():
     prompt, conversation_id_str, file_bytes, file_filename, file_mimetype = _extract_request_data()
     user_id = session['user_id']
 
-    if (not prompt and file_bytes is None) or not conversation_id_str:
-        return jsonify({"error": "Faltan 'prompt' o 'conversation_id'"}), 400
+    if not prompt and file_bytes is None:
+        return jsonify({"error": "Falta el parámetro 'prompt'"}), 400
+
+    if not conversation_id_str:
+        title_source = prompt or (file_filename if file_filename else "Nueva Conversación")
+        title = title_source[:50] + "..." if len(title_source) > 50 else title_source
+        conversation_id_str = db.create_conversation(user_id, title)
+        if not conversation_id_str:
+            return jsonify({"error": "No se pudo crear la conversación. Verifica la conexión a la base de datos."}), 503
 
     def generate():
         full_response = ""
