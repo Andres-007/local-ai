@@ -27,6 +27,21 @@ document.addEventListener('DOMContentLoaded', () => {
     const maxUploadBytes = Number(document.querySelector('meta[name="max-upload-bytes"]')?.content || 0);
     const md = window.markdownit ? window.markdownit({ html: false, linkify: true, breaks: true }) : { render: (t) => String(t || '').replace(/</g, "&lt;").replace(/>/g, "&gt;") };
 
+    async function fetchApi(url, options = {}) {
+        const opts = { ...options };
+        const headers = new Headers(opts.headers || {});
+        if (csrfToken && !['GET', 'HEAD', 'OPTIONS'].includes(String(opts.method || 'GET').toUpperCase())) {
+            headers.set('X-CSRFToken', csrfToken);
+        }
+        opts.headers = headers;
+        const res = await fetch(url, opts);
+        if (res.status === 401) {
+            window.location.href = '/';
+            throw new Error('No autorizado');
+        }
+        return res;
+    }
+
     const archivedBtn = document.getElementById('archived-chats-btn');
     const archivedBtnText = document.getElementById('archived-btn-text');
     const contextMenu = document.getElementById('conversation-context-menu');
