@@ -1,5 +1,7 @@
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import os
+import re
 import sys
 import tempfile
 import io
@@ -13,6 +15,34 @@ from config import Config
 
 logger = logging.getLogger(__name__)
 
+_SAFE_EXT_RE = re.compile(r"^\.[a-zA-Z0-9]{1,10}$")
+
+# Aliases de modelos antiguos retirados
+_LEGACY_OR_INVALID_MODEL_MAP = {
+	"gemini-1.5-flash": "gemini-3.8-flash",
+	"gemini-1.5-pro": "gemini-3.8-flash",
+	"gemini-pro": "gemini-3.8-flash",
+}
+
+_FALLBACK_MODELS = (
+	"gemini-3.8-flash",
+	"gemini-3.6-flash",
+	"gemini-2.5-flash",
+	"gemini-flash-latest",
+)
+
+
+def _sanitize_filename(filename):
+	name = os.path.basename(str(filename or "archivo"))
+	name = re.sub(r"[\r\n`<>\"'\\/\x00-\x1f]", "_", name).strip()
+	return (name[:120] or "archivo")
+
+
+def _safe_suffix(filename):
+	ext = os.path.splitext(_sanitize_filename(filename).lower())[1]
+	return ext if _SAFE_EXT_RE.match(ext) else ".bin"
+
+
 def _env_int(name, default, min_value=None, max_value=None):
 	try:
 		value = int(os.getenv(name, str(default)))
@@ -23,6 +53,7 @@ def _env_int(name, default, min_value=None, max_value=None):
 	if max_value is not None:
 		value = min(max_value, value)
 	return value
+
 
 def _get_api_key():
 	if hasattr(Config, 'get_gemini_api_key'):
@@ -35,96 +66,167 @@ def _get_api_key():
 			return val.strip().strip('"\'')
 	return None
 
-def _configure_genai():
-	key = _get_api_key()
-	if key:
-		try:
-			genai.configure(api_key=key)
-		except Exception as e:
-			logger.error("Error al configurar genai: %s", e)
-	return key
 
-# Intentar configuración inicial de la API
-_configure_genai()
+def _normalize_model_name(raw_name):
+	clean = (raw_name or "").strip()
+	if not clean:
+		return "gemini-3.8-flash"
+	if clean.startswith("models/"):
+		clean = clean[len("models/"):]
+	return _LEGACY_OR_INVALID_MODEL_MAP.get(clean.lower(), clean)
+
+
+def _resolve_thinking_config(model_name):
+	"""
+	Configura thinking_level en LOW por defecto para modelos Gemini 3.x Flash,
+	reduciendo el tiempo hasta el primer token (TTFT) en streaming.
+	Puede ajustarse con GEMINI_THINKING_LEVEL (LOW, MEDIUM, HIGH, NONE).
+	"""
+	m = (model_name or "").lower()
+	raw_level = (os.getenv("GEMINI_THINKING_LEVEL") or "LOW").strip().upper()
+	if raw_level in ("NONE", "OFF", "0", "DEFAULT"):
+		return None
+	if "gemini-3" in m:
+		level_map = {
+			"MINIMAL": types.ThinkingLevel.LOW,
+			"LOW": types.ThinkingLevel.LOW,
+			"MEDIUM": types.ThinkingLevel.MEDIUM,
+			"HIGH": types.ThinkingLevel.HIGH,
+		}
+		chosen = level_map.get(raw_level, types.ThinkingLevel.LOW)
+		return types.ThinkingConfig(thinking_level=chosen)
+	if "gemini-2.5" in m:
+		return types.ThinkingConfig(thinking_budget=0)
+	return None
+
 
 class WebDevAI:
 	"""
-	Clase que interactúa con la API de Gemini para funcionar como un chatbot de desarrollo web.
+	Clase que interactúa con la API de Gemini (SDK oficial google-genai) para funcionar como un chatbot de desarrollo web.
 	"""
 	def __init__(self):
 		"""
-		Inicializa el modelo generativo con system instruction integrada.
+		Inicializa la configuración del modelo generativo con system instruction integrada.
 		"""
-		self.generation_config = {
-			"temperature": 0.5,
-			"top_p": 1,
-			"top_k": 32,
-			"max_output_tokens": _env_int("GEMINI_MAX_OUTPUT_TOKENS", 8192, min_value=1024, max_value=32768),
-		}
+		self.max_output_tokens = _env_int("GEMINI_MAX_OUTPUT_TOKENS", 16384, min_value=1024, max_value=65536)
 		self.safety_settings = [
-			{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-			{"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-			{"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-			{"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+			types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_MEDIUM_AND_ABOVE"),
+			types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_MEDIUM_AND_ABOVE"),
+			types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_MEDIUM_AND_ABOVE"),
+			types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_MEDIUM_AND_ABOVE"),
 		]
 		
-		# System instruction mejorada de nivel Senior con patrones de calidad, seguridad y UI Premium
+		# System instruction mejorada de nivel Senior con Full Frontend Design & Architecture Skills
 		self.system_instruction = """
 [ROL E IDENTIDAD]
-Eres 'Web Dev AI', un Ingeniero de Software Principal y Arquitecto Full-Stack de nivel Senior.
-Tu propósito es diseñar, generar, auditar, refactorizar y explicar código de alta calidad en entornos web, combinando excelencia en Frontend (HTML5, CSS3, JavaScript ES6+) y Backend (Python/Flask/FastAPI, Node.js/Express, entre otros).
+Eres 'Web Dev AI', un Ingeniero de Software Principal, Arquitecto Full-Stack y Product Designer (UI/UX) de nivel Senior (estándar Awwwards / Linear / Vercel / Stripe).
+Tu propósito es diseñar, generar, auditar, refactorizar y explicar código web de máxima calidad, combinando maestría en Diseño de Interfaces y Frontend (HTML5, CSS3 avanzado, JavaScript ES6+) con Ingeniería Backend robusta (Python/Flask/FastAPI, Node.js/Express, entre otros).
 
 [PRINCIPIOS DE ARQUITECTURA Y CALIDAD]
 - Código Limpio (Clean Code): Nombres descriptivos, funciones con responsabilidad única (SRP), código autodocumentado y libre de duplicación (DRY).
-- Estándares Modernos: Uso de HTML5 semántico, CSS moderno (Variables :root, Flexbox, CSS Grid) y JavaScript ES6+ asíncrono (async/await).
-- Seguridad por Diseño: Cero credenciales hardcodeadas, sanitización estricta de datos de entrada y codificación de salidas para prevenir vulnerabilidades como XSS e Inyección SQL.
+- Estándares Modernos: HTML5 semántico y accesible (ARIA), CSS moderno (Variables :root, CSS Grid, Flexbox, clamp(), container-ready) y JavaScript ES6+ modular y asíncrono.
+- Seguridad por Diseño: Cero credenciales hardcodeadas, sanitización estricta de entradas y prevención de XSS/inyecciones.
 
-[DIRECTIVAS DE FRONTEND (HTML / CSS / JS)]
+[FULL SKILLS DE FRONTEND: DISEÑO VISUAL, DISTRIBUCIÓN Y UI/UX DE ÉLITE]
+1. Dirección de Arte y Prohibición de Diseños Genéricos:
+   - Adapta la estética al contexto del proyecto: Minimalismo Técnico de alta precisión (estilo Linear/Vercel) para SaaS e IA; Editorial Sofisticado para marcas/portafolios; FinTech limpio y confiable (estilo Stripe/Mercury) para banca/datos; E-commerce moderno con jerarquía visual clara para tiendas.
+   - Evita el aspecto genérico de plantilla básica: usa superficies por capas de color, bordes de 1px sutiles y contraste tipográfico nítido en lugar de sombras borrosas excesivas o gradientes chillones sin propósito.
+
+2. Sistema de Tokens en `:root` (Design System CSS):
+   - Define siempre variables CSS semánticas para colores de superficie (`--bg-canvas`, `--bg-surface`, `--bg-elevated`, `--bg-glass`), texto (`--text-primary`, `--text-secondary`, `--text-muted`), acentos (`--accent`, `--accent-soft`, `--accent-hover`), estados (`--success`, `--warning`, `--danger`), bordes (`--border-subtle`), radios (`--radius-sm`, `--radius-md`, `--radius-lg`) y transiciones.
+   - En modo oscuro usa fondos profundos con matiz rico (ej. `#090A0F`, `#11131C`, `#181B26`) y bordes translúcidos (`rgba(255, 255, 255, 0.08)`); en modo claro usa fondos cálidos/limpios (`#F8FAFC`, `#FFFFFF`) y bordes `rgba(15, 23, 42, 0.08)`.
+
+3. Distribución Espacial, Retículas y Layouts Avanzados:
+   - Composición y Ritmo: Aplica una escala espacial consistente (múltiplos de 4px/8px) con excelente respiro visual (whitespace). Usa contenedores centrados (`max-width: 1240px` o `1380px`, `margin-inline: auto`, `padding-inline: clamp(1rem, 4vw, 2.5rem)`).
+   - Bento Grids y Asimetría Intencional: Para secciones de características o paneles, utiliza `display: grid` con distribuciones tipo Bento (`grid-template-columns: repeat(12, 1fr)` o `repeat(auto-fit, minmax(min(100%, 280px), 1fr))`) combinando tarjetas de distinto peso visual (`grid-column: span 2`) en vez de bloques repetitivos.
+   - Arquitectura según Tipo de Producto:
+     * Landing Pages: Header sticky con `backdrop-filter: blur(16px)`, Hero de alto impacto (badge superior, título con `clamp()`, subtítulo conciso, doble CTA y un componente visual/interactivo en vivo al lado o debajo), barra de métricas/logos, Bento Grid de beneficios, sección interactiva (tabs/calculadora/precios con toggle mensual-anual), testimonios/FAQ acordeón y Footer completo.
+     * Dashboards y Web Apps: Estructura real de aplicación con Sidebar navegable, Topbar con buscador/filtros/acciones rápidas, tarjetas KPI con badges de tendencia (`+14.8%`), gráficos SVG/Canvas nativos y dinámicos, tablas con filtrado/búsqueda en vivo, estados vacíos cuidados y modales/drawers funcionales.
+
+4. Tipografía Fluida y Jerarquía Escaneable:
+   - Carga fuentes modernas de Google Fonts acordes al diseño (`Plus Jakarta Sans`, `Inter`, `Space Grotesk`, `Outfit`, `Instrument Serif`, `JetBrains Mono`).
+   - Usa escalado fluido con `clamp()` en encabezados (`clamp(2rem, 4vw + 0.5rem, 3.75rem)`), `letter-spacing: -0.03em` en títulos grandes, `line-height: 1.15` en títulos y `1.6` en párrafos (`max-width: 65ch`).
+   - Aplica `font-variant-numeric: tabular-nums` en todas las cifras, precios, relojes, tablas y contadores.
+
+5. Interactividad Real, Micro-interacciones y Riqueza Visual:
+   - Cero UI Muerta: Todo componente visible (filtros, tabs, buscadores, modales, carritos, formularios, calculadoras, conmutador de tema claro/oscuro) DEBE tener lógica JavaScript real, manejo de estado y feedback visual inmediato (notificaciones toast, animaciones suaves, contadores actualizados).
+   - Iconografía y Medios: Incluye siempre iconos SVG inline limpios (`viewBox="0 0 24 24"`, `stroke="currentColor"`, `stroke-width="1.75"`) y gráficos/ilustraciones SVG o Canvas generados por código. Nunca dejes imágenes rotas.
+   - Micro-interacciones: Transiciones fluidas (`cubic-bezier(0.22, 1, 0.36, 1)`), estados `:hover` elegantes, `:focus-visible` claros para accesibilidad por teclado y diseño 100% responsivo Mobile-First desde `320px` hasta pantallas ultrawide.
+
+[FORMATO DE ENTREGA FRONTEND (HTML / CSS / JS)]
 1. Aplicaciones Web Completas (Single-File Monolithic):
-   - Cuando el usuario solicite una página o aplicación web completa, DEBES generar un ÚNICO y COMPLETO archivo HTML.
-   - Todo el CSS DEBE ir embebido dentro de la etiqueta <style> en el <head>.
-   - Todo el JavaScript DEBE ir embebido dentro de la etiqueta <script> antes del cierre de </body>.
-   - Incluye siempre un diseño estético moderno (UI/UX atractivo, modo oscuro/claro limpio, tipografía profesional, interfaz responsiva mobile-first y micro-animaciones en estados :hover/:focus).
-   - La respuesta DEBE entregarse en un único bloque de código Markdown marcado como ```html.
+   - Cuando el usuario solicite una página, interfaz o aplicación web completa, DEBES generar un ÚNICO y COMPLETO archivo HTML listo para producción y vista previa directa.
+   - Todo el CSS DEBE ir embebido dentro de `<style>` en el `<head>`.
+   - Todo el JavaScript DEBE ir embebido dentro de `<script>` antes del cierre de `</body>`.
+   - Entrega la respuesta en un único bloque de código Markdown marcado como ```html.
 2. Fragmentos y Componentes:
-   - Si la solicitud es para un componente específico (ej. 'un modal en CSS' o 'un hook de JS'), genera exclusivamente el bloque de código solicitado con su uso de ejemplo.
+   - Si la solicitud es para un componente específico, entrega el código completo del componente con su demostración lista para usar.
 3. Actualizaciones y Correcciones:
-   - Al corregir o mejorar una página web completa, entrega siempre el archivo HTML completo actualizado para garantizar que sea listo para copiar y usar.
+   - Al iterar, corregir o mejorar una página web completa, entrega siempre el archivo HTML completo e íntegro actualizado (sin omitir secciones con comentarios tipo `<!-- resto del código -->`) para que la vista previa en vivo funcione al instante.
 
 [DIRECTIVAS DE BACKEND (Python / Node.js / Multi-lenguaje)]
-1. Servidores y APIs Robusta:
-   - Al generar código backend (Flask, Express, FastAPI, etc.), incluye siempre estructuración de rutas RESTful, manejo explícito de errores con respuestas JSON estandarizadas y códigos de estado HTTP adecuados (200, 400, 401, 404, 500).
+1. Servidores y APIs Robustas:
+   - Incluye estructuración RESTful limpia, validación de datos, manejo explícito de errores con respuestas JSON estandarizadas y códigos HTTP apropiados (200, 201, 400, 401, 404, 500).
 2. Seguridad y Configuración:
-   - Gestiona secretos y claves mediante variables de entorno (process.env o os.getenv). Indica las variables necesarias en comentarios.
-   - Especifica explícitamente los comandos de instalación de dependencias en un comentario al inicio (ej. # pip install flask dotenv).
+   - Gestiona secretos mediante variables de entorno (`os.getenv` / `process.env`) e incluye al inicio el comando de instalación de dependencias en comentario.
 
 [SEGURIDAD Y SANITIZACIÓN]
-- Al manipular el DOM con JavaScript dinámico, prefiere textContent o document.createTextNode sobre innerHTML para evitar inyecciones XSS.
-- Si se requiere manipular HTML dinámico enriquecido, incluye lógica de sanitización.
+- Al manipular el DOM con datos de usuario en JavaScript, prefiere `textContent`, `createElement` o funciones de escape HTML sobre `innerHTML` sin sanitizar para evitar XSS.
 
 [INTERACCIÓN Y COMUNICACIÓN]
-- Respuestas Directas y Precisas: Ve directo al grano. Acompaña el código con explicaciones concisas de decisiones técnicas clave.
-- Manejo de Ambigüedad: Si el requerimiento del usuario carece de detalles, asume Defaults Profesionales de alto nivel y menciona brevemente las suposiciones realizadas.
-- Flexibilidad Tecnológica: Puedes responder y resolver problemas en cualquier lenguaje o framework (Java/Spring, PHP/Laravel, C#/.NET, Go, Rust, React, Vue, Svelte, SQL, etc.).
+- Respuestas Directas y Precisas: Ve directo al grano. Acompaña el código con un resumen breve de la arquitectura visual y las funcionalidades interactivas incluidas.
+- Defaults Profesionales: Si el prompt del usuario es breve (ej. 'hazme un dashboard de ventas' o 'una landing de cafetería'), infiere y construye de inmediato una versión rica, completa, con datos realistas y diseño de nivel agencia sin pedir aclaraciones innecesarias.
 """
+		self._client = None
+		self._client_key = None
+		self._no_thinking_models = set()
 		self._init_generative_model()
 
-	def _init_generative_model(self, preferred_model=None):
-		model_name = preferred_model or getattr(Config, 'GEMINI_MODEL_NAME', 'gemini-3.6-flash')
-		self.model_name = model_name
-		logger.info(f"Inicializando GenerativeModel de Gemini con modelo: {self.model_name}")
-		self.model = genai.GenerativeModel(
-			model_name=self.model_name,
-			generation_config=self.generation_config,
-			safety_settings=self.safety_settings,
-			system_instruction=self.system_instruction
-		)
+	def _build_config_for_model(self, model_name, include_thinking=True):
+		thinking_cfg = None
+		if include_thinking and model_name not in self._no_thinking_models:
+			thinking_cfg = _resolve_thinking_config(model_name)
+		kwargs = {
+			"temperature": 0.5,
+			"top_p": 1.0,
+			"top_k": 32,
+			"max_output_tokens": self.max_output_tokens,
+			"safety_settings": self.safety_settings,
+			"system_instruction": self.system_instruction,
+			"automatic_function_calling": types.AutomaticFunctionCallingConfig(disable=True),
+		}
+		if thinking_cfg is not None:
+			kwargs["thinking_config"] = thinking_cfg
+		return types.GenerateContentConfig(**kwargs)
 
-	def _ensure_ready(self):
-		key = _configure_genai()
+	def _init_generative_model(self, preferred_model=None):
+		raw_model = preferred_model or os.getenv("GEMINI_MODEL_NAME") or getattr(Config, 'GEMINI_MODEL_NAME', 'gemini-3.8-flash')
+		self.model_name = _normalize_model_name(raw_model)
+		self.config = self._build_config_for_model(self.model_name)
+		logger.info("Inicializando cliente Gemini (google-genai) con modelo: %s", self.model_name)
+
+	def _get_client(self):
+		key = _get_api_key()
 		if not key:
-			return "Error: No se encontró la clave de API de Gemini (GEMINI_API_KEY). Añade GEMINI_API_KEY=tu_clave_aqui en tu archivo .env y reinicia el servidor."
-		return None
+			return None, "Error: No se encontró la clave de API de Gemini (GEMINI_API_KEY). Añade GEMINI_API_KEY=tu_clave_aqui en tu archivo .env y reinicia el servidor."
+		# Usar siempre Gemini Developer API (generativelanguage.googleapis.com) a menos que se fuerce explícitamente GOOGLE_GENAI_USE_VERTEXAI=1
+		use_vertex = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").strip().lower() in ("1", "true", "yes")
+		cache_token = f"{key}|vertex={use_vertex}"
+		if self._client is None or self._client_key != cache_token:
+			try:
+				self._client = genai.Client(api_key=key, vertexai=use_vertex)
+				self._client_key = cache_token
+			except Exception as e:
+				logger.error("Error al inicializar genai.Client: %s", e)
+				return None, "Error: No se pudo inicializar el cliente de Gemini. Verifica tu GEMINI_API_KEY."
+		return self._client, None
+
+	def _candidate_models(self):
+		models = [self.model_name]
+		for m in _FALLBACK_MODELS:
+			if m not in models:
+				models.append(m)
+		return models
 
 	# Máximo de mensajes de historial (Mongo) pasados a Gemini por petición (optimizado a 16 para velocidad)
 	MAX_GEMINI_HISTORY_MESSAGES = _env_int("MAX_GEMINI_HISTORY_MESSAGES", 16, min_value=1, max_value=80)
@@ -144,45 +246,75 @@ Tu propósito es diseñar, generar, auditar, refactorizar y explicar código de 
 			if not content:
 				continue
 			grole = 'user' if role == 'user' else 'model'
-			hist.append({'role': grole, 'parts': [content]})
+			hist.append(types.Content(role=grole, parts=[types.Part.from_text(text=content)]))
 		return hist
 
-	def _start_chat_from_history(self, history_messages=None):
-		return self.model.start_chat(history=self._db_to_gemini_history(history_messages or []))
+	def _start_chat_from_history(self, client, history_messages=None, model_override=None, include_thinking=True):
+		target_model = model_override or self.model_name
+		cfg = self._build_config_for_model(target_model, include_thinking=include_thinking)
+		return client.chats.create(
+			model=target_model,
+			config=cfg,
+			history=self._db_to_gemini_history(history_messages or []),
+		)
 
-	def _safe_last_text(self, chat):
-		last = getattr(chat, "last", None)
-		if last and getattr(last, "text", None):
-			return last.text
+	def _extract_response_text(self, response):
+		txt = self._safe_chunk_text(response)
+		if txt:
+			return txt
 		return "Error: No se recibió respuesta del modelo."
-	
+
+	def _is_model_not_found_error(self, err):
+		err_str = str(err).lower()
+		return "404" in err_str or "not found" in err_str or "not_found" in err_str
+
+	def _is_thinking_unsupported_error(self, err):
+		err_str = str(err).lower()
+		return "thinking" in err_str and ("not supported" in err_str or "invalid_argument" in err_str or "400" in err_str)
+
+	def _is_invalid_api_key_error(self, err):
+		err_str = str(err)
+		return "API_KEY_INVALID" in err_str or "API key not valid" in err_str or "DefaultCredentialsError" in err_str
+
 	def generate(self, prompt, history_messages=None):
 		"""
 		Envía un prompt del usuario al modelo y obtiene una respuesta completa.
 		"""
-		not_ready_err = self._ensure_ready()
+		client, not_ready_err = self._get_client()
 		if not_ready_err:
 			return not_ready_err
-		try:
-			chat = self._start_chat_from_history(history_messages)
-			chat.send_message(prompt)
-			return self._safe_last_text(chat)
-		except Exception as e:
-			logger.exception("Error al contactar con Gemini: %s", e)
-			err_str = str(e)
-			if "404" in err_str or "not found" in err_str.lower():
-				try:
-					fallback_target = "gemini-flash-latest" if self.model_name == "gemini-3.6-flash" else "gemini-3.6-flash"
-					logger.info(f"Reintentando petición con modelo fallback {fallback_target}...")
-					self._init_generative_model(fallback_target)
-					chat = self._start_chat_from_history(history_messages)
-					chat.send_message(prompt)
-					return self._safe_last_text(chat)
-				except Exception as e2:
-					return f"Error: Modelo no encontrado ({self.model_name}). Verifica el nombre del modelo en tu .env. Detalle: {e2}"
-			if "API_KEY_INVALID" in err_str or "API key not valid" in err_str or "DefaultCredentialsError" in err_str:
-				return "Error: Clave de API de Gemini no válida o ausente. Revisa tu GEMINI_API_KEY en tu archivo .env."
-			return f"Error: No se pudo obtener una respuesta del modelo. Detalle: {e}"
+
+		last_err = None
+		for candidate_model in self._candidate_models():
+			try:
+				chat = self._start_chat_from_history(client, history_messages, model_override=candidate_model)
+				response = chat.send_message(prompt)
+				if candidate_model != self.model_name:
+					self.model_name = candidate_model
+				return self._extract_response_text(response)
+			except Exception as e:
+				if self._is_thinking_unsupported_error(e):
+					self._no_thinking_models.add(candidate_model)
+					try:
+						chat = self._start_chat_from_history(client, history_messages, model_override=candidate_model, include_thinking=False)
+						response = chat.send_message(prompt)
+						if candidate_model != self.model_name:
+							self.model_name = candidate_model
+						return self._extract_response_text(response)
+					except Exception as retry_err:
+						e = retry_err
+				last_err = e
+				logger.warning("Error con modelo %s: %s", candidate_model, e)
+				if self._is_model_not_found_error(e):
+					continue
+				break
+
+		logger.exception("Error al contactar con Gemini: %s", last_err)
+		if self._is_invalid_api_key_error(last_err):
+			return "Error: Clave de API de Gemini no válida o ausente. Revisa tu GEMINI_API_KEY en tu archivo .env."
+		if self._is_model_not_found_error(last_err):
+			return f"Error: Modelo no encontrado ({self.model_name}). Verifica GEMINI_MODEL_NAME en tu .env."
+		return "Error: No se pudo obtener una respuesta del modelo en este momento. Intenta nuevamente."
 
 	# Extensiones de archivos de código/texto soportados
 	TEXT_EXTENSIONS = frozenset({
@@ -199,6 +331,7 @@ Tu propósito es diseñar, generar, auditar, refactorizar y explicar código de 
 
 	# Tamaño máximo (bytes) para incluir archivo completo como texto; el resto se trunca
 	MAX_TEXT_FILE_BYTES = 1 * 1024 * 1024  # 1 MB
+	MAX_PDF_PAGES = 100
 
 	# MIME types típicos de código y texto (además de text/*)
 	TEXT_MIMETYPES = frozenset({
@@ -299,14 +432,22 @@ Tu propósito es diseñar, generar, auditar, refactorizar y explicar código de 
 				file_storage.seek(0)
 			reader = PdfReader(io.BytesIO(raw))
 			parts = []
-			for page in reader.pages:
+			total_chars = 0
+			for page in reader.pages[:self.MAX_PDF_PAGES]:
 				try:
 					text = page.extract_text()
 					if text and isinstance(text, str):
-						parts.append(text.strip())
+						clean = text.strip()
+						parts.append(clean)
+						total_chars += len(clean)
+						if total_chars >= self.MAX_TEXT_FILE_BYTES:
+							break
 				except Exception:
 					pass
-			return "\n\n".join(parts) if parts else ""
+			joined = "\n\n".join(parts) if parts else ""
+			if len(joined) > self.MAX_TEXT_FILE_BYTES:
+				joined = joined[:self.MAX_TEXT_FILE_BYTES] + "\n\n[... texto PDF truncado ...]"
+			return joined
 		except Exception as e:
 			logger.exception("Error leyendo PDF: %s", e)
 			raise
@@ -361,23 +502,23 @@ Tu propósito es diseñar, generar, auditar, refactorizar y explicar código de 
 			return None
 
 	def generate_with_file(self, prompt, file_storage=None, file_bytes=None, filename=None, mimetype=None, history_messages=None):
-		not_ready_err = self._ensure_ready()
+		client, not_ready_err = self._get_client()
 		if not_ready_err:
 			return not_ready_err
 		try:
 			if file_bytes is not None:
 				raw = file_bytes if isinstance(file_bytes, bytes) else bytes(file_bytes)
-				filename = filename or "archivo"
+				filename = _sanitize_filename(filename or "archivo")
 				mimetype = mimetype or ""
 			else:
 				if file_storage is None:
 					return "Error: No se proporcionó archivo."
-				filename = file_storage.filename or "archivo"
+				filename = _sanitize_filename(file_storage.filename or "archivo")
 				mimetype = file_storage.mimetype or ""
 				raw = self._read_file_storage_once(file_storage)
 				if raw is None:
 					return "Error: No se pudo leer el archivo adjunto (stream cerrado o no disponible)."
-			chat = self._start_chat_from_history(history_messages)
+
 			file_like = self._wrap_bytes_as_file_like(raw, filename, mimetype)
 			ext = os.path.splitext(filename.lower())[1]
 			content = self._get_readable_content(file_like, filename, mimetype)
@@ -386,8 +527,7 @@ Tu propósito es diseñar, generar, auditar, refactorizar y explicar código de 
 				lang = self._lang_for_filename(filename)
 				code_block = f"```{lang}\n{content}\n```" if lang else f"```\n{content}\n```"
 				combined_prompt = f"{prompt}\n\nArchivo adjunto: {filename}\n{code_block}".strip()
-				chat.send_message(combined_prompt)
-				return self._safe_last_text(chat)
+				return self.generate(combined_prompt, history_messages=history_messages)
 
 			if ext == ".pdf":
 				return (
@@ -403,14 +543,13 @@ Tu propósito es diseñar, generar, auditar, refactorizar y explicar código de 
 					lang = self._lang_for_filename(filename)
 					code_block = f"```{lang}\n{content2}\n```" if lang else f"```\n{content2}\n```"
 					combined_prompt = f"{prompt}\n\nArchivo adjunto: {filename}\n{code_block}".strip()
-					chat.send_message(combined_prompt)
-					return self._safe_last_text(chat)
+					return self.generate(combined_prompt, history_messages=history_messages)
 				except Exception as e2:
 					logger.exception("Error leyendo archivo de código (%s): %s", filename, e2)
-					return f"No se pudo leer el archivo {filename}. Comprueba que no esté dañado. Detalle: {e2}"
+					return f"No se pudo leer el archivo {filename}. Comprueba que no esté dañado."
 
 			tmp_path = None
-			with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp:
+			with tempfile.NamedTemporaryFile(delete=False, suffix=_safe_suffix(filename)) as tmp:
 				try:
 					tmp.write(raw)
 					tmp.flush()
@@ -419,9 +558,19 @@ Tu propósito es diseñar, generar, auditar, refactorizar y explicar código de 
 				except OSError:
 					return "Error: No se pudo guardar el archivo adjunto."
 			try:
-				uploaded = genai.upload_file(tmp_path)
-				chat.send_message([uploaded, prompt or f"Analiza el archivo {filename}."])
-				return self._safe_last_text(chat)
+				uploaded = client.files.upload(file=tmp_path)
+				for candidate_model in self._candidate_models():
+					try:
+						chat = self._start_chat_from_history(client, history_messages, model_override=candidate_model)
+						response = chat.send_message([uploaded, prompt or f"Analiza el archivo {filename}."])
+						if candidate_model != self.model_name:
+							self.model_name = candidate_model
+						return self._extract_response_text(response)
+					except Exception as e:
+						if self._is_model_not_found_error(e):
+							continue
+						raise
+				return "Error: Modelo no disponible para procesar el archivo."
 			finally:
 				if tmp_path:
 					try:
@@ -444,7 +593,11 @@ Tu propósito es diseñar, generar, auditar, refactorizar y explicar código de 
 		try:
 			candidates = getattr(chunk, "candidates", [])
 			if candidates and candidates[0].content and candidates[0].content.parts:
-				return "".join(part.text for part in candidates[0].content.parts if getattr(part, "text", None))
+				return "".join(
+					part.text
+					for part in candidates[0].content.parts
+					if getattr(part, "text", None) and not getattr(part, "thought", False)
+				)
 		except (IndexError, AttributeError):
 			pass
 		return ""
@@ -453,61 +606,73 @@ Tu propósito es diseñar, generar, auditar, refactorizar y explicar código de 
 		"""
 		Envía un prompt del usuario al modelo y genera una respuesta en streaming.
 		"""
-		not_ready_err = self._ensure_ready()
+		client, not_ready_err = self._get_client()
 		if not_ready_err:
 			yield not_ready_err
 			return
-		try:
-			chat = self._start_chat_from_history(history_messages)
-			response = chat.send_message(prompt, stream=True)
-			for chunk in response:
-				txt = self._safe_chunk_text(chunk)
-				if txt:
-					yield txt
-		except Exception as e:
-			logger.exception("Error al contactar con Gemini (streaming): %s", e)
-			err_str = str(e)
-			if "404" in err_str or "not found" in err_str.lower():
-				try:
-					fallback_target = "gemini-flash-latest" if self.model_name == "gemini-3.6-flash" else "gemini-3.6-flash"
-					logger.info(f"Reintentando streaming con modelo fallback {fallback_target}...")
-					self._init_generative_model(fallback_target)
-					chat = self._start_chat_from_history(history_messages)
-					response = chat.send_message(prompt, stream=True)
-					for chunk in response:
-						txt = self._safe_chunk_text(chunk)
-						if txt:
-							yield txt
-					return
-				except Exception as e2:
-					yield f"Error: Modelo no encontrado ({self.model_name}). Detalle: {e2}"
-					return
-			if "API_KEY_INVALID" in err_str or "API key not valid" in err_str or "DefaultCredentialsError" in err_str:
-				yield "Error: Clave de API de Gemini no válida o ausente. Revisa tu GEMINI_API_KEY en tu archivo .env."
-			else:
-				yield f"Error: No se pudo obtener respuesta del modelo ({e})."
+
+		last_err = None
+		for candidate_model in self._candidate_models():
+			try:
+				chat = self._start_chat_from_history(client, history_messages, model_override=candidate_model)
+				response = chat.send_message_stream(prompt)
+				for chunk in response:
+					txt = self._safe_chunk_text(chunk)
+					if txt:
+						yield txt
+				if candidate_model != self.model_name:
+					self.model_name = candidate_model
+				return
+			except Exception as e:
+				if self._is_thinking_unsupported_error(e):
+					self._no_thinking_models.add(candidate_model)
+					try:
+						chat = self._start_chat_from_history(client, history_messages, model_override=candidate_model, include_thinking=False)
+						response = chat.send_message_stream(prompt)
+						for chunk in response:
+							txt = self._safe_chunk_text(chunk)
+							if txt:
+								yield txt
+						if candidate_model != self.model_name:
+							self.model_name = candidate_model
+						return
+					except Exception as retry_err:
+						e = retry_err
+				last_err = e
+				logger.warning("Error streaming con modelo %s: %s", candidate_model, e)
+				if self._is_model_not_found_error(e):
+					continue
+				break
+
+		logger.exception("Error al contactar con Gemini (streaming): %s", last_err)
+		if self._is_invalid_api_key_error(last_err):
+			yield "Error: Clave de API de Gemini no válida o ausente. Revisa tu GEMINI_API_KEY en tu archivo .env."
+		elif self._is_model_not_found_error(last_err):
+			yield f"Error: Modelo no encontrado ({self.model_name})."
+		else:
+			yield "Error: No se pudo obtener respuesta del modelo en este momento."
 
 	def generate_stream_with_file(self, prompt, file_storage=None, file_bytes=None, filename=None, mimetype=None, history_messages=None):
-		not_ready_err = self._ensure_ready()
+		client, not_ready_err = self._get_client()
 		if not_ready_err:
 			yield not_ready_err
 			return
 		try:
 			if file_bytes is not None:
 				raw = file_bytes if isinstance(file_bytes, bytes) else bytes(file_bytes)
-				filename = filename or "archivo"
+				filename = _sanitize_filename(filename or "archivo")
 				mimetype = mimetype or ""
 			else:
 				if file_storage is None:
 					yield "Error: No se proporcionó archivo."
 					return
-				filename = file_storage.filename or "archivo"
+				filename = _sanitize_filename(file_storage.filename or "archivo")
 				mimetype = file_storage.mimetype or ""
 				raw = self._read_file_storage_once(file_storage)
 				if raw is None:
 					yield "Error: No se pudo leer el archivo adjunto (stream cerrado o no disponible)."
 					return
-			chat = self._start_chat_from_history(history_messages)
+
 			file_like = self._wrap_bytes_as_file_like(raw, filename, mimetype)
 			ext = os.path.splitext(filename.lower())[1]
 			content = self._get_readable_content(file_like, filename, mimetype)
@@ -516,10 +681,7 @@ Tu propósito es diseñar, generar, auditar, refactorizar y explicar código de 
 				lang = self._lang_for_filename(filename)
 				code_block = f"```{lang}\n{content}\n```" if lang else f"```\n{content}\n```"
 				combined_prompt = f"{prompt}\n\nArchivo adjunto: {filename}\n{code_block}".strip()
-				response = chat.send_message(combined_prompt, stream=True)
-				for chunk in response:
-					if getattr(chunk, "text", None):
-						yield chunk.text
+				yield from self.generate_stream(combined_prompt, history_messages=history_messages)
 				return
 
 			if ext == ".pdf":
@@ -538,18 +700,15 @@ Tu propósito es diseñar, generar, auditar, refactorizar y explicar código de 
 					lang = self._lang_for_filename(filename)
 					code_block = f"```{lang}\n{content2}\n```" if lang else f"```\n{content2}\n```"
 					combined_prompt = f"{prompt}\n\nArchivo adjunto: {filename}\n{code_block}".strip()
-					response = chat.send_message(combined_prompt, stream=True)
-					for chunk in response:
-						if getattr(chunk, "text", None):
-							yield chunk.text
+					yield from self.generate_stream(combined_prompt, history_messages=history_messages)
 					return
 				except Exception as e2:
 					logger.exception("Error leyendo archivo de código (%s): %s", filename, e2)
-					yield f"No se pudo leer el archivo {filename}. Comprueba que no esté dañado. Detalle: {e2}"
+					yield f"No se pudo leer el archivo {filename}. Comprueba que no esté dañado."
 					return
 
 			tmp_path = None
-			with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp:
+			with tempfile.NamedTemporaryFile(delete=False, suffix=_safe_suffix(filename)) as tmp:
 				try:
 					tmp.write(raw)
 					tmp.flush()
@@ -559,11 +718,22 @@ Tu propósito es diseñar, generar, auditar, refactorizar y explicar código de 
 					yield "Error: No se pudo guardar el archivo adjunto."
 					return
 			try:
-				uploaded = genai.upload_file(tmp_path)
-				response = chat.send_message([uploaded, prompt or f"Analiza el archivo {filename}."], stream=True)
-				for chunk in response:
-					if getattr(chunk, "text", None):
-						yield chunk.text
+				uploaded = client.files.upload(file=tmp_path)
+				for candidate_model in self._candidate_models():
+					try:
+						chat = self._start_chat_from_history(client, history_messages, model_override=candidate_model)
+						response = chat.send_message_stream([uploaded, prompt or f"Analiza el archivo {filename}."])
+						for chunk in response:
+							txt = self._safe_chunk_text(chunk)
+							if txt:
+								yield txt
+						if candidate_model != self.model_name:
+							self.model_name = candidate_model
+						return
+					except Exception as e:
+						if self._is_model_not_found_error(e):
+							continue
+						raise
 			finally:
 				if tmp_path:
 					try:

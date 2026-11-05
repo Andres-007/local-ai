@@ -25,7 +25,73 @@ document.addEventListener('DOMContentLoaded', () => {
     const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
     const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
     const maxUploadBytes = Number(document.querySelector('meta[name="max-upload-bytes"]')?.content || 0);
-    const md = window.markdownit ? window.markdownit({ html: false, linkify: true, breaks: true }) : { render: (t) => String(t || '').replace(/</g, "&lt;").replace(/>/g, "&gt;") };
+
+    function escapeHtml(s) {
+        return String(s ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function formatFileSize(bytes) {
+        const b = Number(bytes) || 0;
+        return b < 1024
+            ? `${b} B`
+            : b < 1024 * 1024
+                ? `${(b / 1024).toFixed(1)} KB`
+                : `${(b / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    const validateSafeLink = (defaultValidator) => (url) => {
+        const clean = String(url || '').trim().toLowerCase();
+        if (clean.startsWith('javascript:') || clean.startsWith('vbscript:') || clean.startsWith('data:')) {
+            return false;
+        }
+        return defaultValidator ? defaultValidator(url) : true;
+    };
+
+    const md = window.markdownit
+        ? window.markdownit({
+            html: false,
+            linkify: true,
+            breaks: true,
+            highlight: (str, lang) => {
+                const safeLang = String(lang || '').replace(/[^a-zA-Z0-9_-]/g, '');
+                if (safeLang && typeof hljs !== 'undefined' && hljs.getLanguage && hljs.getLanguage(safeLang)) {
+                    try {
+                        const result = hljs.highlight(str, { language: safeLang, ignoreIllegals: true });
+                        return `<pre class="hljs"><code class="language-${safeLang}">${result.value}</code></pre>`;
+                    } catch (_) {
+                        return `<pre class="hljs"><code class="language-${safeLang}">${escapeHtml(str)}</code></pre>`;
+                    }
+                }
+                return `<pre class="hljs"><code>${escapeHtml(str)}</code></pre>`;
+            }
+        })
+        : { render: (t) => escapeHtml(t) };
+
+    // Renderer ligero durante el streaming (sin re-ejecutar hljs.highlight en cada frame)
+    const mdStream = window.markdownit
+        ? window.markdownit({
+            html: false,
+            linkify: true,
+            breaks: true,
+            highlight: (str, lang) => {
+                const safeLang = String(lang || '').replace(/[^a-zA-Z0-9_-]/g, '');
+                const cls = safeLang ? ` class="language-${safeLang}"` : '';
+                return `<pre class="hljs"><code${cls}>${escapeHtml(str)}</code></pre>`;
+            }
+        })
+        : md;
+
+    if (md.validateLink) {
+        md.validateLink = validateSafeLink(md.validateLink.bind(md));
+    }
+    if (mdStream && mdStream !== md && mdStream.validateLink) {
+        mdStream.validateLink = validateSafeLink(mdStream.validateLink.bind(mdStream));
+    }
 
     async function fetchApi(url, options = {}) {
         const opts = { ...options };
@@ -57,6 +123,63 @@ document.addEventListener('DOMContentLoaded', () => {
     let attachmentError = '';
     const conversationPaging = { limit: 30, offset: 0, hasMore: false, loading: false };
     const messagePaging = { limit: 50, offset: 0, hasMore: false, loading: false };
+
+    function renderAttachmentPreview() {
+        if (!attachmentsPreview) return;
+        if (attachmentError) {
+            attachmentsPreview.innerHTML = `
+                <div class="attachment-chip attachment-chip--error">
+                    <span class="attachment-name">${escapeHtml(attachmentError)}</span>
+                    <button type="button" class="attachment-remove" aria-label="Descartar error" title="Descartar error">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+            `;
+            attachmentsPreview.querySelector('.attachment-remove')?.addEventListener('click', (e) => {
+                e.preventDefault();
+                attachmentError = '';
+                renderAttachmentPreview();
+            });
+            return;
+        }
+        const file = fileInput?.files?.[0];
+        if (!file) {
+            attachmentsPreview.innerHTML = '';
+            return;
+        }
+        const safeName = escapeHtml(file.name);
+        const size = formatFileSize(file.size);
+        attachmentsPreview.innerHTML = `
+            <div class="attachment-chip">
+                <span class="attachment-icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                </span>
+                <span class="attachment-name" title="${safeName}">${safeName}</span>
+                <span class="attachment-size">${size}</span>
+                <button type="button" class="attachment-remove" aria-label="Quitar archivo" title="Quitar archivo">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+        `;
+        attachmentsPreview.querySelector('.attachment-remove')?.addEventListener('click', (e) => {
+            e.preventDefault();
+            attachmentError = '';
+            fileInput.value = '';
+            renderAttachmentPreview();
+        });
+    }
+
+    if (fileInput) {
+        fileInput.addEventListener('change', () => {
+            attachmentError = '';
+            const file = fileInput.files[0];
+            if (file && maxUploadBytes > 0 && file.size > maxUploadBytes) {
+                attachmentError = `El archivo supera el límite de ${formatFileSize(maxUploadBytes)}.`;
+                fileInput.value = '';
+            }
+            renderAttachmentPreview();
+        });
+    }
 
     const openSidebar = () => { sidebar.classList.add('open'); sidebarOverlay.classList.add('active'); };
     const closeSidebar = () => { sidebar.classList.remove('open'); sidebarOverlay.classList.remove('active'); };
@@ -136,7 +259,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const targetId = contextTargetId;
             hideContextMenu();
             try {
-                await fetchApi(`/api/conversations/${targetId}/archive`, {
+                await fetchApi(`/api/conversations/${encodeURIComponent(targetId)}/archive`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ archived: !isShowingArchived })
@@ -220,7 +343,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 const data = await res.json();
                 if (data.conversation_id) {
                     currentConversationId = data.conversation_id;
-                    await loadConversations();
+                    // No bloqueamos el inicio del streaming esperando el refresco del sidebar
+                    loadConversations();
                     return currentConversationId;
                 }
             }
@@ -293,13 +417,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 const itemEl = document.createElement('div');
                 itemEl.className = 'conversation-item';
                 if (conv._id === currentConversationId) itemEl.classList.add('active');
-                itemEl.dataset.id = escapeHtml(String(conv._id));
+                itemEl.dataset.id = String(conv._id);
                 itemEl.innerHTML = `
                     <span class="conversation-title">${escapeHtml(String(conv.title ?? ''))}</span>
                     <button class="delete-btn" data-id="${escapeHtml(String(conv._id))}" title="Eliminar conversación">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                     </button>
                 `;
+                conversationsList.appendChild(itemEl);
             });
         });
     }
@@ -332,7 +457,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 limit: messagePaging.limit,
                 offset: messagePaging.offset
             });
-            const res = await fetchApi(`/api/conversations/${id}?${params.toString()}`);
+            const res = await fetchApi(`/api/conversations/${encodeURIComponent(id)}?${params.toString()}`);
             if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
             const conv = await res.json();
             if (reset) {
@@ -371,9 +496,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!conversationToDeleteId) return;
         try {
             const deletingId = conversationToDeleteId;
-            const itemEl = conversationsList.querySelector(`.conversation-item[data-id="${deletingId}"]`);
+            const safeSelectorId = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(deletingId) : escapeHtml(deletingId);
+            const itemEl = conversationsList.querySelector(`.conversation-item[data-id="${safeSelectorId}"]`);
 
-            await fetchApi(`/api/conversations/${deletingId}`, { method: 'DELETE' });
+            await fetchApi(`/api/conversations/${encodeURIComponent(deletingId)}`, { method: 'DELETE' });
             if (currentConversationId === deletingId) newChatBtn.click();
 
             if (itemEl) {
@@ -431,7 +557,7 @@ document.addEventListener('DOMContentLoaded', () => {
         currentStreamController = abortController;
 
         try {
-            const conversationId = await ensureConversationId(displayMessage);
+            let conversationId = currentConversationId;
             let res;
             try {
                 if (file) {
@@ -459,6 +585,9 @@ document.addEventListener('DOMContentLoaded', () => {
             } catch (streamErr) {
                 if (streamErr.name === 'AbortError') throw streamErr;
                 console.warn('Fallback a /api/generate por error en streaming/Vercel:', streamErr);
+                if (!conversationId) {
+                    conversationId = await ensureConversationId(displayMessage);
+                }
                 if (file) {
                     const formData = new FormData();
                     formData.append('prompt', message || `Archivo adjunto: ${file.name}`);
@@ -483,6 +612,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!res.ok) {
                     throw new Error(`HTTP error! status: ${res.status}`);
                 }
+            }
+
+            const headerConvId = res.headers.get("X-Conversation-Id");
+            if (!currentConversationId && headerConvId) {
+                currentConversationId = headerConvId;
             }
 
             const contentType = res.headers.get("content-type") || "";
@@ -515,7 +649,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     renderAnimationFrame = requestAnimationFrame(() => {
                         renderAnimationFrame = null;
                         try {
-                            content.innerHTML = md.render(fullResponse);
+                            content.innerHTML = mdStream.render(fullResponse);
                         } catch (_) {
                             content.textContent = fullResponse;
                         }
@@ -577,10 +711,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function buildMessageElement(text, role, isTyping = false) {
         const msgGroup = document.createElement('div');
-        msgGroup.className = `message-group ${role}-message`;
+        const safeRole = role === 'bot' ? 'bot' : 'user';
+        msgGroup.className = `message-group ${safeRole}-message`;
         msgGroup.innerHTML = `
-            <div class="message-header">${role === 'user' ? 'Tú' : 'Web Dev AI'}</div>
-            <div class="message-content">${isTyping ? text : (role === 'bot' ? md.render(text) : text.replace(/</g, "&lt;").replace(/>/g, "&gt;"))}</div>
+            <div class="message-header">${safeRole === 'user' ? 'Tú' : 'Web Dev AI'}</div>
+            <div class="message-content">${isTyping ? text : (safeRole === 'bot' ? md.render(String(text ?? '')) : escapeHtml(text))}</div>
         `;
         return msgGroup;
     }
@@ -611,12 +746,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function updateLastBotMessage(text, element) {
         const content = element.querySelector('.message-content');
-        content.innerHTML = md.render(text);
+        content.innerHTML = md.render(String(text ?? ''));
         addPreviewButton(content);
         chatContainer.scrollTop = chatContainer.scrollHeight;
     }
     
     function addPreviewButton(content) {
+        content.querySelectorAll('a').forEach(link => {
+            link.setAttribute('target', '_blank');
+            link.setAttribute('rel', 'noopener noreferrer');
+        });
         content.querySelectorAll('pre > code').forEach(codeBlock => {
             const preElement = codeBlock.parentElement;
             const container = preElement.parentElement;
@@ -694,27 +833,24 @@ document.addEventListener('DOMContentLoaded', () => {
                     currentPreviewCode = code;
                     const navigationInterceptorScript = `
                         <script>
-                            document.addEventListener('DOMContentLoaded', function() {
-                                document.querySelectorAll('a').forEach(link => {
-                                    link.addEventListener('click', function(event) {
-                                        event.preventDefault(); 
-                                        console.log('Navegación de enlace bloqueada en previsualización.');
-                                    });
-                                });
-                                document.querySelectorAll('form').forEach(form => {
-                                    form.addEventListener('submit', function(event) {
-                                        event.preventDefault();
-                                        console.log('Envío de formulario bloqueado en previsualización.');
-                                    });
-                                });
-                            });
+                            document.addEventListener('click', function(event) {
+                                const link = event.target && event.target.closest ? event.target.closest('a') : null;
+                                if (link) {
+                                    event.preventDefault();
+                                    console.log('Navegación de enlace bloqueada en previsualización.');
+                                }
+                            }, true);
+                            document.addEventListener('submit', function(event) {
+                                event.preventDefault();
+                                console.log('Envío de formulario bloqueado en previsualización.');
+                            }, true);
                         <\/script>
                     `;
 
                     if (currentPreviewCode.includes('</body>')) {
-                        runnerFrame.srcdoc = currentPreviewCode.replace(/<\/body>(?![\s\S]*<\/body>)/i, navigationInterceptorScript + '</body>');
+                        runnerFrame.srcdoc = currentPreviewCode.replace(/<\/body>(?![\s\S]*<\/body>)/i, () => navigationInterceptorScript + '</body>');
                     } else if (currentPreviewCode.includes('</html>')) {
-                        runnerFrame.srcdoc = currentPreviewCode.replace(/<\/html>(?![\s\S]*<\/html>)/i, navigationInterceptorScript + '</html>');
+                        runnerFrame.srcdoc = currentPreviewCode.replace(/<\/html>(?![\s\S]*<\/html>)/i, () => navigationInterceptorScript + '</html>');
                     } else {
                         runnerFrame.srcdoc = currentPreviewCode + navigationInterceptorScript;
                     }

@@ -1,6 +1,7 @@
 from pymongo import ASCENDING, DESCENDING, MongoClient
 from pymongo.errors import OperationFailure, ServerSelectionTimeoutError
 from datetime import datetime, timezone
+import hashlib
 import os
 import sys
 import subprocess
@@ -17,6 +18,14 @@ from config import Config
 
 logger = logging.getLogger(__name__)
 
+_VALID_HOSTNAME_RE = re.compile(
+    r"^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$"
+)
+
+
+def _hash_reset_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
 
 def _env_int(name, default, min_value=None, max_value=None):
     try:
@@ -31,7 +40,9 @@ def _env_int(name, default, min_value=None, max_value=None):
 
 
 def _normalize_email(email):
-    return (email or "").strip().lower()
+    if not isinstance(email, str):
+        return ""
+    return email.strip().lower()
 
 
 def _should_try_srv_fallback(exc):
@@ -63,7 +74,9 @@ def _resolve_mongodb_srv_via_nslookup(uri):
             auth, host = netloc.rsplit("@", 1)
         else:
             auth, host = "", netloc
-        host_clean = host.split("/")[0].split("?")[0]
+        host_clean = host.split("/")[0].split("?")[0].strip()
+        if not host_clean or not _VALID_HOSTNAME_RE.match(host_clean):
+            return None
         srv_host = f"_mongodb._tcp.{host_clean}"
         shards = []
         try:
@@ -106,7 +119,14 @@ class ChatDatabase:
 
     def connect(self) -> bool:
         try:
-            uri = (Config.MONGODB_URI or "").strip()
+            from dotenv import load_dotenv
+            raw_uri = (os.getenv("MONGODB_URI") or Config.MONGODB_URI or "").strip().strip("\"'")
+            if not (raw_uri.startswith("mongodb://") or raw_uri.startswith("mongodb+srv://")):
+                load_dotenv(os.path.join(ROOT_DIR, '.env'), override=True)
+                raw_uri = (os.getenv("MONGODB_URI") or Config.MONGODB_URI or "").strip().strip("\"'")
+            uri = raw_uri
+            while uri.startswith("mongodb:"):
+                uri = uri[len("mongodb:"):].strip()
             if not uri:
                 raise ValueError("MONGODB_URI no está configurada.")
             if not (uri.startswith('mongodb://') or uri.startswith('mongodb+srv://')):
@@ -167,7 +187,8 @@ class ChatDatabase:
             td = getattr(self.client, "topology_description", None)
             if not td:
                 return False
-            return "RSPrimary" in str(td)
+            td_str = str(td)
+            return any(marker in td_str for marker in ("RSPrimary", "Standalone", "Single"))
         except Exception:
             return False
 
@@ -202,7 +223,7 @@ class ChatDatabase:
         if not self._ensure_connection():
             return None
         email = _normalize_email(email)
-        if not email:
+        if not email or not isinstance(password_hash, str):
             return None
         user_data = {
             'email': email,
@@ -225,12 +246,12 @@ class ChatDatabase:
             return None
 
     def get_user_by_google_id(self, google_id):
-        if not self._ensure_connection():
+        if not self._ensure_connection() or not isinstance(google_id, str) or not google_id:
             return None
         return self.users.find_one({'google_id': google_id})
 
     def create_google_user(self, email, google_id, name=None):
-        if not self._ensure_connection():
+        if not self._ensure_connection() or not isinstance(google_id, str) or not google_id:
             return None
         email = _normalize_email(email)
         if not email:
@@ -238,7 +259,7 @@ class ChatDatabase:
         user_data = {
             'email': email,
             'google_id': google_id,
-            'name': name or '',
+            'name': str(name or ''),
             'password': None,
             'created_at': datetime.now(timezone.utc)
         }
@@ -246,24 +267,24 @@ class ChatDatabase:
         return str(result.inserted_id)
 
     def link_google_to_user(self, user_id, google_id, name=None):
-        if not self._ensure_connection():
+        if not self._ensure_connection() or not isinstance(google_id, str) or not google_id:
             return False
         try:
             self.users.update_one(
                 {'_id': ObjectId(user_id)},
-                {'$set': {'google_id': google_id, 'name': name or ''}}
+                {'$set': {'google_id': google_id, 'name': str(name or '')}}
             )
             return True
         except Exception:
             return False
 
     def get_user_by_github_id(self, github_id):
-        if not self._ensure_connection():
+        if not self._ensure_connection() or not isinstance(github_id, str) or not github_id:
             return None
         return self.users.find_one({'github_id': github_id})
 
     def create_github_user(self, email, github_id, name=None):
-        if not self._ensure_connection():
+        if not self._ensure_connection() or not isinstance(github_id, str) or not github_id:
             return None
         email = _normalize_email(email)
         if not email:
@@ -271,7 +292,7 @@ class ChatDatabase:
         user_data = {
             'email': email,
             'github_id': github_id,
-            'name': name or '',
+            'name': str(name or ''),
             'password': None,
             'created_at': datetime.now(timezone.utc)
         }
@@ -279,12 +300,12 @@ class ChatDatabase:
         return str(result.inserted_id)
 
     def link_github_to_user(self, user_id, github_id, name=None):
-        if not self._ensure_connection():
+        if not self._ensure_connection() or not isinstance(github_id, str) or not github_id:
             return False
         try:
             self.users.update_one(
                 {'_id': ObjectId(user_id)},
-                {'$set': {'github_id': github_id, 'name': name or ''}}
+                {'$set': {'github_id': github_id, 'name': str(name or '')}}
             )
             return True
         except Exception:
@@ -302,12 +323,13 @@ class ChatDatabase:
         if not self._ensure_connection():
             return False
         email = _normalize_email(email)
-        if not email:
+        if not email or not isinstance(token, str) or not token.strip():
             return False
+        token_hash = _hash_reset_token(token.strip())
         try:
             self.users.update_one(
                 {'email': email},
-                {'$set': {'reset_token': token, 'reset_expires': expires_at}}
+                {'$set': {'reset_token': token_hash, 'reset_expires': expires_at}}
             )
             return True
         except Exception as e:
@@ -315,11 +337,15 @@ class ChatDatabase:
             return False
 
     def reset_password_with_token(self, token, new_password_hash):
-        if not self._ensure_connection() or not token:
+        if not isinstance(token, str) or not isinstance(new_password_hash, str):
             return False
+        token_clean = token.strip()
+        if not token_clean or not new_password_hash or not self._ensure_connection():
+            return False
+        token_hash = _hash_reset_token(token_clean)
         try:
             now = datetime.now(timezone.utc)
-            user = self.users.find_one({'reset_token': token, 'reset_expires': {'$gt': now}})
+            user = self.users.find_one({'reset_token': token_hash, 'reset_expires': {'$gt': now}})
             if not user:
                 return False
             self.users.update_one(
@@ -333,11 +359,12 @@ class ChatDatabase:
 
     # Métodos de Conversación
     def create_conversation(self, user_id, title="Nueva Conversación"):
-        if not self._ensure_connection():
+        if not self._ensure_connection() or not isinstance(user_id, str) or not user_id:
             return None
+        safe_title = str(title or "Nueva Conversación").strip()[:80] or "Nueva Conversación"
         conversation = {
             'user_id': user_id,
-            'title': title,
+            'title': safe_title,
             'created_at': datetime.now(timezone.utc),
             'updated_at': datetime.now(timezone.utc),
         }
@@ -346,6 +373,8 @@ class ChatDatabase:
 
     def save_message(self, conversation_id, role, content):
         if not self._ensure_connection():
+            return False
+        if role not in ('user', 'bot') or not isinstance(content, str):
             return False
         message = {
             'conversation_id': conversation_id,
@@ -400,7 +429,7 @@ class ChatDatabase:
         if not self._ensure_connection():
             return None
         try:
-            oid = conversation_id if isinstance(conversation_id, ObjectId) else ObjectId(conversation_id)
+            oid = conversation_id if isinstance(conversation_id, ObjectId) else ObjectId(str(conversation_id))
         except Exception:
             return None
         doc = self.conversations.find_one({'_id': oid}, {'user_id': 1})
@@ -410,7 +439,7 @@ class ChatDatabase:
         return str(uid) if uid is not None else None
 
     def get_user_conversations(self, user_id, limit=None, skip=0, archived=False):
-        if not self._ensure_connection():
+        if not self._ensure_connection() or not isinstance(user_id, str) or not user_id:
             return []
         query_filter = {'user_id': user_id}
         if archived:
@@ -432,10 +461,10 @@ class ChatDatabase:
         return conversations
 
     def archive_conversation(self, conversation_id, user_id, archive_state=True):
-        if not self._ensure_connection():
+        if not self._ensure_connection() or not isinstance(user_id, str) or not user_id:
             return False
         try:
-            conv_obj_id = ObjectId(conversation_id)
+            conv_obj_id = ObjectId(str(conversation_id))
             result = self.conversations.update_one(
                 {'_id': conv_obj_id, 'user_id': user_id},
                 {'$set': {'archived': bool(archive_state)}}
@@ -445,10 +474,10 @@ class ChatDatabase:
             return False
 
     def delete_conversation(self, conversation_id, user_id):
-        if not self._ensure_connection():
+        if not self._ensure_connection() or not isinstance(user_id, str) or not user_id:
             return False
         try:
-            conv_obj_id = ObjectId(conversation_id)
+            conv_obj_id = ObjectId(str(conversation_id))
             conversation = self.conversations.find_one({'_id': conv_obj_id})
             if not conversation:
                 return False
@@ -465,7 +494,7 @@ class ChatDatabase:
         if not self._ensure_connection():
             return None
         try:
-            conv_obj_id = ObjectId(conversation_id)
+            conv_obj_id = ObjectId(str(conversation_id))
             conversation = self.conversations.find_one({'_id': conv_obj_id})
             if not conversation:
                 return None
@@ -486,11 +515,11 @@ class ChatDatabase:
         if not self._ensure_connection():
             return None
         project_data = {
-            'title': title,
-            'description': description,
-            'imageUrl': imageUrl,
-            'projectUrl': projectUrl,
-            'codeSnippet': codeSnippet,
+            'title': str(title or ''),
+            'description': str(description or ''),
+            'imageUrl': str(imageUrl or ''),
+            'projectUrl': str(projectUrl or ''),
+            'codeSnippet': str(codeSnippet or ''),
             'created_at': datetime.now(timezone.utc)
         }
         result = self.projects.insert_one(project_data)
@@ -519,7 +548,7 @@ class ChatDatabase:
             return None
         try:
             projection = None if include_code else {'codeSnippet': 0}
-            proj = self.projects.find_one({'_id': ObjectId(project_id)}, projection)
+            proj = self.projects.find_one({'_id': ObjectId(str(project_id))}, projection)
             if proj:
                 proj['_id'] = str(proj['_id'])
             return proj

@@ -1,13 +1,16 @@
 from flask import Flask, render_template, request, jsonify, session, Response, redirect, url_for, send_from_directory, make_response
 from flask_cors import CORS
 from authlib.integrations.flask_client import OAuth
-from model.model import WebDevAI
+from model.model import WebDevAI, _sanitize_filename
 from model.database import ChatDatabase
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.exceptions import RequestEntityTooLarge
 from functools import wraps
 from collections import defaultdict, deque
+import hashlib
+import hmac
+import re
 import secrets
 import os
 import time
@@ -24,6 +27,20 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_MAX_EMAIL_LENGTH = 254
+_MIN_PASSWORD_LENGTH = 8
+_MAX_PASSWORD_LENGTH = 128
+_MAX_PROMPT_LENGTH = 100000
+_WEAK_SECRET_VALUES = frozenset({
+    "",
+    "replace-with-a-long-random-secret",
+    "changeme",
+    "secret",
+    "webdevia-production-serverless-secret-2026",
+    "your-gemini-api-key",
+})
 
 
 def _env_flag(name, default=False):
@@ -61,16 +78,39 @@ def _is_production_like():
     )
 
 
+def _resolve_secret_key():
+    """
+    Obtiene una SECRET_KEY segura para firmar sesiones de Flask.
+    Nunca reutiliza GEMINI_API_KEY en crudo ni usa cadenas públicas hardcodeadas.
+    """
+    explicit = os.getenv("SECRET_KEY", "").strip()
+    if explicit and explicit not in _WEAK_SECRET_VALUES and len(explicit) >= 16:
+        return explicit
+
+    if _is_production_like():
+        logger.warning(
+            "SECRET_KEY ausente o débil en entorno de producción/Serverless. "
+            "Define una variable SECRET_KEY aleatoria de al menos 32 bytes."
+        )
+        # En Serverless (Vercel), derivar con HMAC-SHA256 solo si existe material privado configurado
+        private_parts = [
+            p for p in (
+                os.getenv("GITHUB_CLIENT_SECRET", "").strip(),
+                os.getenv("GEMINI_API_KEY", "").strip(),
+                os.getenv("MONGODB_URI", "").strip(),
+            )
+            if p and p not in _WEAK_SECRET_VALUES and p != "mongodb://localhost:27017/"
+        ]
+        if private_parts:
+            seed_material = "|".join(private_parts).encode("utf-8")
+            return hmac.new(b"webdevai-session-signing-key-v1", seed_material, hashlib.sha256).hexdigest()
+
+    return secrets.token_hex(32)
+
+
 app = Flask(__name__, template_folder='web/templates', static_folder='web/static')
 app.config["MAX_CONTENT_LENGTH"] = _env_int("MAX_UPLOAD_BYTES", 10 * 1024 * 1024, min_value=1)
-
-# Secret Key determinista para evitar la invalidación de sesiones en entornos Serverless (Vercel Lambdas)
-_secret_from_env = os.getenv("SECRET_KEY", "").strip()
-if _secret_from_env:
-    app.secret_key = _secret_from_env
-else:
-    # Secret Key determinista para mantener sesiones consistentes entre distintas Lambdas en Vercel
-    app.secret_key = os.getenv("GEMINI_API_KEY") or "webdevia-production-serverless-secret-2026"
+app.secret_key = _resolve_secret_key()
 
 if _is_trusted_proxy_hosting():
     # Asegura que request.scheme / url_for(..., _external=True) coincidan con HTTPS en Vercel
@@ -102,7 +142,7 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
 
 # CORS
 allowed_origins = os.getenv('CORS_ORIGINS', 'http://localhost:4000,http://127.0.0.1:4000,https://webdevia.vercel.app').split(',')
-CORS(app, origins=[o.strip() for o in allowed_origins], supports_credentials=True)
+CORS(app, origins=[o.strip() for o in allowed_origins if o.strip()], supports_credentials=True)
 
 # Inicializar servicios
 ai_model = WebDevAI()
@@ -138,13 +178,25 @@ _RATE_LIMITS = {
     "/login": (10, 60),
     "/register": (5, 300),
     "/forgot-password": (5, 300),
+    "/reset-password": (5, 300),
     "/api/generate": (20, 3600),
     "/api/generate-stream": (20, 3600),
 }
 
 
 def _normalize_email(email):
-    return (email or "").strip().lower()
+    if not isinstance(email, str):
+        return ""
+    return email.strip().lower()
+
+
+def _is_valid_email(email):
+    return bool(
+        isinstance(email, str)
+        and email
+        and len(email) <= _MAX_EMAIL_LENGTH
+        and _EMAIL_RE.match(email)
+    )
 
 
 def _get_or_create_csrf_token():
@@ -155,9 +207,24 @@ def _get_or_create_csrf_token():
     return token
 
 
+def _establish_authenticated_session(user_id, email, name=None):
+    """Limpia la sesión previa y regenera el token CSRF para prevenir Session Fixation."""
+    session.clear()
+    session.permanent = True
+    session['user_id'] = str(user_id)
+    session['user_email'] = email
+    if name:
+        session['user_name'] = str(name)
+    session['_csrf_token'] = secrets.token_urlsafe(32)
+    session.modified = True
+
+
 def _client_identifier():
-    forwarded_for = (request.headers.get("X-Forwarded-For") or "").split(",", 1)[0].strip()
-    return session.get("user_id") or forwarded_for or request.remote_addr or "unknown"
+    if _is_trusted_proxy_hosting():
+        forwarded_for = (request.headers.get("X-Forwarded-For") or "").split(",", 1)[0].strip()
+        if forwarded_for:
+            return session.get("user_id") or forwarded_for
+    return session.get("user_id") or request.remote_addr or "unknown"
 
 
 @app.context_processor
@@ -205,7 +272,13 @@ def _csrf_protect_session_posts():
         return None
     expected = session.get("_csrf_token")
     submitted = request.headers.get("X-CSRFToken") or request.form.get("csrf_token")
-    if not expected or not submitted or not secrets.compare_digest(expected, submitted):
+    if (
+        not isinstance(expected, str)
+        or not isinstance(submitted, str)
+        or not expected
+        or not submitted
+        or not secrets.compare_digest(expected, submitted)
+    ):
         return jsonify({"error": "Token CSRF inválido o ausente"}), 400
     return None
 
@@ -225,10 +298,32 @@ def _no_store_redirect(location):
 
 
 @app.after_request
-def _no_store_auth_post_responses(response):
-    if request.method == "POST" and request.path in ("/login", "/register", "/forgot-password"):
+def _apply_security_headers_and_cache_control(response):
+    if request.method == "POST" and request.path in ("/login", "/register", "/forgot-password", "/reset-password"):
         response.headers.setdefault("Cache-Control", "no-store, private")
         response.headers.setdefault("Pragma", "no-cache")
+
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; "
+            "font-src 'self' https://fonts.gstatic.com data:; "
+            "img-src 'self' https: data: blob:; "
+            "connect-src 'self'; "
+            "frame-src 'self' blob: about:; "
+            "frame-ancestors 'self'; "
+            "base-uri 'self'; "
+            "form-action 'self' https://github.com;"
+        ),
+    )
+    if _is_production_like():
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     return response
 
 
@@ -239,6 +334,10 @@ def _parse_paging_args(default_limit=50, max_limit=200):
     except ValueError:
         limit = default_limit
         offset = 0
+    if limit is None:
+        limit = default_limit
+    if offset is None:
+        offset = 0
     limit = max(1, min(limit, max_limit))
     offset = max(0, offset)
     return limit, offset
@@ -246,15 +345,21 @@ def _parse_paging_args(default_limit=50, max_limit=200):
 
 def _extract_request_data():
     if request.is_json:
-        data = request.get_json(silent=True) or {}
-        prompt = data.get('prompt')
-        conversation_id = data.get('conversation_id')
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            data = {}
+        raw_prompt = data.get('prompt')
+        raw_conv_id = data.get('conversation_id')
+        prompt = raw_prompt if isinstance(raw_prompt, str) else ""
+        conversation_id = raw_conv_id.strip() if isinstance(raw_conv_id, str) and raw_conv_id.strip() else None
         file_bytes = None
         file_filename = None
         file_mimetype = None
     else:
-        prompt = request.form.get('prompt')
-        conversation_id = request.form.get('conversation_id')
+        raw_prompt = request.form.get('prompt')
+        raw_conv_id = request.form.get('conversation_id')
+        prompt = raw_prompt if isinstance(raw_prompt, str) else ""
+        conversation_id = raw_conv_id.strip() if isinstance(raw_conv_id, str) and raw_conv_id.strip() else None
         uploaded_file = request.files.get('file')
         file_bytes = None
         file_filename = None
@@ -264,8 +369,8 @@ def _extract_request_data():
                 file_bytes = uploaded_file.read()
                 if len(file_bytes or b"") > app.config["MAX_CONTENT_LENGTH"]:
                     raise RequestEntityTooLarge()
-                file_filename = uploaded_file.filename or "archivo"
-                file_mimetype = uploaded_file.mimetype or ""
+                file_filename = _sanitize_filename(uploaded_file.filename or "archivo")
+                file_mimetype = (uploaded_file.mimetype or "")[:100]
                 if file_bytes is None:
                     file_bytes = b""
                 elif isinstance(file_bytes, str):
@@ -279,13 +384,16 @@ def _extract_request_data():
                 file_bytes = None
                 file_filename = None
                 file_mimetype = None
-    return (prompt or '').strip(), conversation_id, file_bytes, file_filename, file_mimetype
+    clean_prompt = prompt.strip()[:_MAX_PROMPT_LENGTH]
+    return clean_prompt, conversation_id, file_bytes, file_filename, file_mimetype
 
 
 def _prepare_generation_context(conversation_id_str, user_id):
+    if not isinstance(conversation_id_str, str) or not conversation_id_str.strip():
+        return None, None, jsonify({"error": "conversation_id inválido"}), 400
     try:
-        conversation_id = ObjectId(conversation_id_str)
-    except InvalidId:
+        conversation_id = ObjectId(conversation_id_str.strip())
+    except (InvalidId, TypeError):
         return None, None, jsonify({"error": "conversation_id inválido"}), 400
 
     owner = db.get_conversation_user_id(conversation_id)
@@ -340,12 +448,21 @@ def chat():
 
 @app.route('/login', methods=['POST'])
 def login():
-    data = request.get_json(silent=True) or {}
-    email = _normalize_email(data.get('email'))
-    password = data.get('password')
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Solicitud JSON inválida"}), 400
 
+    raw_email = data.get('email')
+    password = data.get('password')
+    if not isinstance(raw_email, str) or not isinstance(password, str):
+        return jsonify({"error": "Email y contraseña deben ser texto válido"}), 400
+
+    email = _normalize_email(raw_email)
     if not email or not password:
         return jsonify({"error": "Email y contraseña son requeridos"}), 400
+
+    if len(email) > _MAX_EMAIL_LENGTH or len(password) > _MAX_PASSWORD_LENGTH:
+        return jsonify({"error": "Credenciales inválidas"}), 400
 
     if not db._ensure_connection():
         return jsonify({"error": "Servicio no disponible. Intenta más tarde."}), 503
@@ -356,13 +473,10 @@ def login():
         logger.exception("Error en login (DB): %s", e)
         return jsonify({"error": "Servicio no disponible. Intenta más tarde."}), 503
 
-    if not user or not user.get('password'):
+    if not user or not isinstance(user.get('password'), str) or not user.get('password'):
         return jsonify({"error": "Credenciales inválidas"}), 401
     if check_password_hash(user['password'], password):
-        session.permanent = True
-        session['user_id'] = str(user['_id'])
-        session['user_email'] = user['email']
-        session.modified = True
+        _establish_authenticated_session(str(user['_id']), user['email'], user.get('name'))
         return jsonify({"message": "Inicio de sesión exitoso"}), 200
 
     return jsonify({"error": "Credenciales inválidas"}), 401
@@ -370,15 +484,27 @@ def login():
 
 @app.route('/register', methods=['POST'])
 def register():
-    data = request.get_json(silent=True) or {}
-    email = _normalize_email(data.get('email'))
-    password = data.get('password')
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Solicitud JSON inválida"}), 400
 
+    raw_email = data.get('email')
+    password = data.get('password')
+    if not isinstance(raw_email, str) or not isinstance(password, str):
+        return jsonify({"error": "Email y contraseña deben ser texto válido"}), 400
+
+    email = _normalize_email(raw_email)
     if not email or not password:
         return jsonify({"error": "Email y contraseña son requeridos"}), 400
 
-    if len(password) < 8:
+    if not _is_valid_email(email):
+        return jsonify({"error": "Formato de email inválido"}), 400
+
+    if len(password) < _MIN_PASSWORD_LENGTH:
         return jsonify({"error": "La contraseña debe tener al menos 8 caracteres"}), 400
+
+    if len(password) > _MAX_PASSWORD_LENGTH:
+        return jsonify({"error": f"La contraseña no puede superar los {_MAX_PASSWORD_LENGTH} caracteres"}), 400
 
     if not db._ensure_connection():
         return jsonify({"error": "Servicio no disponible. Intenta más tarde."}), 503
@@ -391,33 +517,41 @@ def register():
     if not user_id:
         return jsonify({"error": "No se pudo crear la cuenta. Verifica la conexión a la base de datos."}), 503
 
-    session.permanent = True
-    session['user_id'] = user_id
-    session['user_email'] = email
-    session.modified = True
-
+    _establish_authenticated_session(user_id, email)
     return jsonify({"message": "Registro exitoso", "user_id": user_id}), 201
 
 
-@app.route('/logout')
+@app.route('/logout', methods=['GET', 'POST'])
 def logout():
+    if request.method == 'GET':
+        sec_fetch_site = (request.headers.get('Sec-Fetch-Site') or '').lower()
+        sec_fetch_dest = (request.headers.get('Sec-Fetch-Dest') or '').lower()
+        if sec_fetch_site == 'cross-site' or sec_fetch_dest in ('image', 'script', 'style', 'iframe'):
+            return jsonify({"error": "Solicitud de cierre de sesión no permitida desde origen externo"}), 400
     session.clear()
     return _no_store_redirect(url_for('index'))
 
 
 @app.route('/forgot-password', methods=['POST'])
 def forgot_password():
-    data = request.get_json(silent=True) or {}
-    email = _normalize_email(data.get('email'))
-    if not email:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Solicitud JSON inválida"}), 400
+
+    raw_email = data.get('email')
+    if not isinstance(raw_email, str):
         return jsonify({"error": "El email es requerido"}), 400
+
+    email = _normalize_email(raw_email)
+    if not _is_valid_email(email):
+        return jsonify({"error": "El email es requerido o tiene un formato inválido"}), 400
 
     user = db.get_user_by_email(email)
     if user:
         token = secrets.token_urlsafe(32)
         expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
         db.create_password_reset_token(email, token, expires_at)
-        logger.info("Token de recuperación generado para %s: %s", email, token)
+        logger.info("Solicitud de restablecimiento de contraseña generada para el usuario: %s", email)
 
     return jsonify({
         "message": "Si existe una cuenta con ese email, recibirás un enlace para restablecer tu contraseña en unos minutos."
@@ -426,21 +560,31 @@ def forgot_password():
 
 @app.route('/reset-password', methods=['POST'])
 def reset_password():
-    data = request.get_json(silent=True) or {}
-    token = (data.get('token') or "").strip()
-    new_password = data.get('password')
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Solicitud JSON inválida"}), 400
 
+    raw_token = data.get('token')
+    new_password = data.get('password')
+    if not isinstance(raw_token, str) or not isinstance(new_password, str):
+        return jsonify({"error": "Token y nueva contraseña deben ser texto válido"}), 400
+
+    token = raw_token.strip()
     if not token or not new_password:
         return jsonify({"error": "Token y nueva contraseña son requeridos"}), 400
 
-    if len(new_password) < 8:
+    if len(new_password) < _MIN_PASSWORD_LENGTH:
         return jsonify({"error": "La contraseña debe tener al menos 8 caracteres"}), 400
+
+    if len(new_password) > _MAX_PASSWORD_LENGTH:
+        return jsonify({"error": f"La contraseña no puede superar los {_MAX_PASSWORD_LENGTH} caracteres"}), 400
 
     hashed_password = generate_password_hash(new_password)
     success = db.reset_password_with_token(token, hashed_password)
     if not success:
         return jsonify({"error": "El token de restablecimiento es inválido o ha expirado"}), 400
 
+    session.clear()
     return jsonify({"message": "Contraseña actualizada exitosamente"}), 200
 
 
@@ -477,26 +621,29 @@ def auth_github_callback():
         token = oauth.github.authorize_access_token()
         resp = oauth.github.get('/user', token=token)
         user_info = resp.json() if resp else {}
-        github_id = str(user_info.get('id', ''))
-        name = user_info.get('name') or user_info.get('login') or ''
-        email = (user_info.get('email') or '').strip().lower()
+        github_id = str(user_info.get('id', '')).strip()
+        name = (user_info.get('name') or user_info.get('login') or '').strip()
+        email = ''
+
+        # Priorizar únicamente emails verificados desde /user/emails para prevenir pre-account takeover
+        try:
+            emails_resp = oauth.github.get('/user/emails', token=token)
+            if emails_resp:
+                for e in (emails_resp.json() or []):
+                    if isinstance(e, dict) and e.get('primary') and e.get('verified'):
+                        email = _normalize_email(e.get('email'))
+                        break
+                    if isinstance(e, dict) and not email and e.get('verified'):
+                        email = _normalize_email(e.get('email'))
+        except Exception:
+            pass
 
         if not email:
-            try:
-                emails_resp = oauth.github.get('/user/emails', token=token)
-                if emails_resp:
-                    for e in (emails_resp.json() or []):
-                        if e.get('primary') and e.get('verified'):
-                            email = (e.get('email') or '').strip().lower()
-                            break
-                        if not email and e.get('verified'):
-                            email = (e.get('email') or '').strip().lower()
-            except Exception:
-                pass
+            email = _normalize_email(user_info.get('email'))
 
         if not github_id:
             return _no_store_redirect(url_for('index') + '?error=invalid_github_user')
-        if not email:
+        if not _is_valid_email(email):
             return _no_store_redirect(url_for('index') + '?error=github_email_required')
         if not db._ensure_connection():
             return _no_store_redirect(url_for('index') + '?error=service_unavailable')
@@ -514,10 +661,7 @@ def auth_github_callback():
         else:
             user_id = str(user['_id'])
 
-        session.permanent = True
-        session['user_id'] = user_id
-        session['user_email'] = email
-        session.modified = True
+        _establish_authenticated_session(user_id, email, name)
         return _no_store_redirect(url_for('chat'))
     except Exception as e:
         logger.exception("GitHub OAuth error: %s", e)
@@ -572,8 +716,10 @@ def get_conversations():
 @app.route('/api/conversations/<conversation_id>/archive', methods=['PATCH', 'POST'])
 @login_required
 def archive_conversation(conversation_id):
-    data = request.get_json(silent=True) or {}
-    archive_state = data.get('archived', True)
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        data = {}
+    archive_state = bool(data.get('archived', True))
     success = db.archive_conversation(conversation_id, session['user_id'], archive_state)
     if success:
         return jsonify({"message": "Estado de archivo actualizado", "archived": archive_state})
@@ -583,8 +729,11 @@ def archive_conversation(conversation_id):
 @app.route('/api/conversations', methods=['POST'])
 @login_required
 def create_conversation():
-    data = request.get_json(silent=True) or {}
-    title = (data.get('title') or "Nueva Conversación").strip()
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        data = {}
+    raw_title = data.get('title')
+    title = (raw_title if isinstance(raw_title, str) else "Nueva Conversación").strip()
     if not title:
         title = "Nueva Conversación"
     if len(title) > 80:
@@ -681,28 +830,33 @@ def api_generate_stream():
     if not prompt and file_bytes is None:
         return jsonify({"error": "Falta el parámetro 'prompt'"}), 400
 
+    created_new = False
     if not conversation_id_str:
         title_source = prompt or (file_filename if file_filename else "Nueva Conversación")
         title = title_source[:50] + "..." if len(title_source) > 50 else title_source
         conversation_id_str = db.create_conversation(user_id, title)
         if not conversation_id_str:
             return jsonify({"error": "No se pudo crear la conversación. Verifica la conexión a la base de datos."}), 503
+        created_new = True
 
     def generate():
         full_response = ""
+        conversation_id = None
+        user_message = prompt or (f"Archivo adjunto: {file_filename}" if file_filename else "")
+        user_message_saved = False
         try:
-            conversation_id, history_tail, error_response, error_code = _prepare_generation_context(conversation_id_str, user_id)
-            if error_response:
-                try:
-                    payload = error_response.get_json(silent=True) or {}
-                    yield f"Error: {payload.get('error', 'Error interno del servidor')}"
-                except Exception:
-                    yield "Error: No se pudo procesar la solicitud."
-                return
-
-            user_message = prompt or (f"Archivo adjunto: {file_filename}" if file_filename else "")
-            if user_message:
-                db.save_message(conversation_id, 'user', user_message)
+            if created_new:
+                conversation_id = ObjectId(conversation_id_str)
+                history_tail = []
+            else:
+                conversation_id, history_tail, error_response, error_code = _prepare_generation_context(conversation_id_str, user_id)
+                if error_response:
+                    try:
+                        payload = error_response.get_json(silent=True) or {}
+                        yield f"Error: {payload.get('error', 'Error interno del servidor')}"
+                    except Exception:
+                        yield "Error: No se pudo procesar la solicitud."
+                    return
 
             if file_bytes is not None:
                 stream = ai_model.generate_stream_with_file(
@@ -714,19 +868,30 @@ def api_generate_stream():
                 )
             else:
                 stream = ai_model.generate_stream(prompt, history_messages=history_tail)
+
             for chunk in stream:
                 full_response += chunk
                 yield chunk
 
-            db.save_message(conversation_id, 'bot', full_response)
         except Exception as e:
             logger.exception("Error en streaming: %s", e)
             yield "Error: No se pudo completar la respuesta. Inténtalo de nuevo."
+        finally:
+            if conversation_id is not None:
+                try:
+                    if user_message and not user_message_saved:
+                        db.save_message(conversation_id, 'user', user_message)
+                        user_message_saved = True
+                    if full_response:
+                        db.save_message(conversation_id, 'bot', full_response)
+                except Exception as db_err:
+                    logger.warning("Error guardando mensajes tras streaming: %s", db_err)
     
     res = Response(generate(), mimetype='text/plain; charset=utf-8')
     res.headers['X-Accel-Buffering'] = 'no'
     res.headers['Cache-Control'] = 'no-cache, no-transform'
     res.headers['Connection'] = 'keep-alive'
+    res.headers['X-Conversation-Id'] = str(conversation_id_str)
     return res
 
 

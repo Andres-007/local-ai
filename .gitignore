@@ -7,3 +7,9 @@ __pycache__/
 .coverage
 *.log
 .DS_Store
+
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/

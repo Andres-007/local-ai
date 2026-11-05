@@ -69,25 +69,22 @@ document.addEventListener('DOMContentLoaded', function() {
     function setProjectPreviewSrcdoc(html) {
         const navigationInterceptorScript = `
             <script>
-                document.addEventListener('DOMContentLoaded', function() {
-                    document.querySelectorAll('a').forEach(function(link) {
-                        link.addEventListener('click', function(event) {
-                            event.preventDefault();
-                        });
-                    });
-                    document.querySelectorAll('form').forEach(function(form) {
-                        form.addEventListener('submit', function(event) {
-                            event.preventDefault();
-                        });
-                    });
-                });
+                document.addEventListener('click', function(event) {
+                    const link = event.target && event.target.closest ? event.target.closest('a') : null;
+                    if (link) {
+                        event.preventDefault();
+                    }
+                }, true);
+                document.addEventListener('submit', function(event) {
+                    event.preventDefault();
+                }, true);
             <\/script>
         `;
         const doc = String(html || '');
         if (doc.includes('</body>')) {
-            projectPreviewFrame.srcdoc = doc.replace(/<\/body>(?![\s\S]*<\/body>)/i, navigationInterceptorScript + '</body>');
+            projectPreviewFrame.srcdoc = doc.replace(/<\/body>(?![\s\S]*<\/body>)/i, () => navigationInterceptorScript + '</body>');
         } else if (doc.includes('</html>')) {
-            projectPreviewFrame.srcdoc = doc.replace(/<\/html>(?![\s\S]*<\/html>)/i, navigationInterceptorScript + '</html>');
+            projectPreviewFrame.srcdoc = doc.replace(/<\/html>(?![\s\S]*<\/html>)/i, () => navigationInterceptorScript + '</html>');
         } else {
             projectPreviewFrame.srcdoc = doc + navigationInterceptorScript;
         }
@@ -281,7 +278,7 @@ document.addEventListener('DOMContentLoaded', function() {
             slide.classList.add('swiper-slide');
             
             const fallbackImg = `https://placehold.co/600x400/1c1c2b/f0f0f5?text=Error+Img`;
-            const imgSrc = safeHttpImageUrl(project.imageUrl, fallbackImg);
+            const imgSrc = escapeHtml(safeHttpImageUrl(project.imageUrl, fallbackImg));
             const t = escapeHtml(String(project.title ?? ''));
             const d = escapeHtml(String(project.description ?? ''));
 
